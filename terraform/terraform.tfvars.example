@@ -1,0 +1,15 @@
+# Copy this file to terraform.tfvars and fill in your values:
+#   cp terraform.tfvars.example terraform.tfvars
+
+# Your public IP address in CIDR notation.
+# Find yours: curl -s https://checkip.amazonaws.com | sed 's/$/.\/32/'
+your_ip_cidr = "YOUR_IP/32"
+
+# Name of your EC2 key pair (must already exist in your target region)
+key_name = "your-key-pair-name"
+
+# Uncomment to change defaults:
+# aws_region            = "us-east-1"
+# manager_instance_type = "t3.medium"
+# agent_instance_type   = "t3.micro"
+# environment           = "lab"
