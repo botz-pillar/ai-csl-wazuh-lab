@@ -1,0 +1,96 @@
+<mxfile host="app.diagrams.net" modified="2026-04-03" version="21.0.0">
+  <diagram name="AI-CSL Wazuh Lab Architecture" id="wazuh-lab-arch">
+    <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="AI-CSL Wazuh Lab — AWS Architecture" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontStyle=1;fontColor=#1a1a2e;" vertex="1" parent="1">
+          <mxGeometry x="200" y="20" width="769" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- AWS Account boundary -->
+        <mxCell id="aws-account" value="AWS Account (018326344683) — us-east-1" style="points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_account;strokeColor=#CD2264;fillColor=#F4B9DA;verticalAlign=top;align=center;spacingTop=25;fontSize=14;fontStyle=1;fontColor=#CD2264;" vertex="1" parent="1">
+          <mxGeometry x="80" y="80" width="1000" height="640" as="geometry" />
+        </mxCell>
+
+        <!-- VPC -->
+        <mxCell id="vpc" value="VPC: 10.0.0.0/16  (ai-csl-wazuh-lab)" style="points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_vpc;strokeColor=#8C4FFF;fillColor=#F5F0FF;verticalAlign=top;align=center;spacingTop=25;fontSize=13;fontColor=#8C4FFF;" vertex="1" parent="1">
+          <mxGeometry x="120" y="140" width="880" height="520" as="geometry" />
+        </mxCell>
+
+        <!-- Public Subnet -->
+        <mxCell id="subnet" value="Public Subnet: 10.0.1.0/24  (us-east-1a)" style="points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_public_subnet;strokeColor=#147EBA;fillColor=#E6F2F8;verticalAlign=top;align=center;spacingTop=25;fontSize=12;fontColor=#147EBA;" vertex="1" parent="1">
+          <mxGeometry x="160" y="210" width="800" height="400" as="geometry" />
+        </mxCell>
+
+        <!-- Internet Gateway -->
+        <mxCell id="igw" value="Internet Gateway" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#8C4FFF;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.internet_gateway;" vertex="1" parent="1">
+          <mxGeometry x="520" y="240" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="igw-label" value="ai-csl-wazuh-lab-igw" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontColor=#666;" vertex="1" parent="1">
+          <mxGeometry x="480" y="305" width="140" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Wazuh Manager EC2 -->
+        <mxCell id="manager-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;arcSize=5;" vertex="1" parent="1">
+          <mxGeometry x="190" y="340" width="340" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="manager-icon" value="Wazuh Manager" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#E7157B;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=13;fontStyle=1;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ec2;" vertex="1" parent="1">
+          <mxGeometry x="340" y="350" width="50" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="manager-details" value="t3.medium | Ubuntu 22.04&#xa;30GB gp3 (encrypted)&#xa;IMDSv2 enforced&#xa;&#xa;Elastic IP (public)&#xa;&#xa;Ports open to YOUR IP:&#xa;• 22 — SSH&#xa;• 443 — Wazuh Dashboard&#xa;• 55000 — Wazuh API&#xa;&#xa;Ports open to VPC only:&#xa;• 1514 — Agent comms&#xa;• 1515 — Agent enrollment" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=11;fontColor=#1a1a2e;" vertex="1" parent="1">
+          <mxGeometry x="200" y="410" width="320" height="150" as="geometry" />
+        </mxCell>
+
+        <!-- Elastic IP badge -->
+        <mxCell id="eip" value="Elastic IP" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#F58535;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=10;fontStyle=1;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.elastic_ip_address;" vertex="1" parent="1">
+          <mxGeometry x="195" y="350" width="35" height="35" as="geometry" />
+        </mxCell>
+
+        <!-- Wazuh Agent EC2 -->
+        <mxCell id="agent-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;arcSize=5;" vertex="1" parent="1">
+          <mxGeometry x="590" y="340" width="340" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="agent-icon" value="Wazuh Agent" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#1A9C3E;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=13;fontStyle=1;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ec2;" vertex="1" parent="1">
+          <mxGeometry x="740" y="350" width="50" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="agent-details" value="t3.micro | Ubuntu 22.04&#xa;20GB gp3 (encrypted)&#xa;IMDSv2 enforced&#xa;No public IP&#xa;&#xa;Ports open to YOUR IP:&#xa;• 22 — SSH (via manager hop)&#xa;&#xa;Outbound (VPC internal):&#xa;• 1514 → Manager (events)&#xa;• 1515 → Manager (enroll)&#xa;&#xa;Generates: auth events, file&#xa;integrity alerts, process data" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=11;fontColor=#1a1a2e;" vertex="1" parent="1">
+          <mxGeometry x="600" y="410" width="320" height="150" as="geometry" />
+        </mxCell>
+
+        <!-- Agent → Manager arrow -->
+        <mxCell id="agent-to-manager" value="1514/1515 (VPC internal)" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#FF6600;strokeWidth=2;fillColor=#FF6600;fontColor=#FF6600;fontSize=10;fontStyle=1;" edge="1" source="agent-box" target="manager-box" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Internet arrow to IGW -->
+        <mxCell id="inet-to-igw" value="HTTPS/SSH&#xa;(your IP only)" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#0066CC;strokeWidth=2;fillColor=#0066CC;fontColor=#0066CC;fontSize=10;fontStyle=1;" edge="1" source="internet-box" target="igw" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- IGW to Manager -->
+        <mxCell id="igw-to-manager" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#8C4FFF;strokeWidth=2;" edge="1" source="igw" target="manager-box" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Internet / You box -->
+        <mxCell id="internet-box" value="You + OpenClaw + Silas&#xa;&#xa;Browser: Wazuh Dashboard&#xa;SSH: Manager access&#xa;MCP: AI analyst queries" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1a1a2e;strokeColor=#444;fontColor=#ffffff;fontSize=11;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="420" y="640" width="280" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- Security callout -->
+        <mxCell id="security-note" value="🔒 Security Controls&#xa;• No 0.0.0.0/0 ingress&#xa;• EBS encrypted at rest&#xa;• IMDSv2 (token-required)&#xa;• Agent: no public IP&#xa;• Dedicated VPC (not default)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=left;arcSize=8;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="900" y="360" width="160" height="120" as="geometry" />
+        </mxCell>
+
+        <!-- MCP callout -->
+        <mxCell id="mcp-note" value="🤖 AI Analyst (Silas)&#xa;Wazuh MCP Server&#xa;→ Query alerts&#xa;→ Agent health&#xa;→ Vuln summary&#xa;→ Compliance check" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1f0ff;strokeColor=#0066CC;fontSize=10;align=left;arcSize=8;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="900" y="500" width="160" height="110" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
