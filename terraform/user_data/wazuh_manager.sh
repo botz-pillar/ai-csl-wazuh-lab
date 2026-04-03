@@ -1,58 +1,56 @@
 #!/bin/bash
-set -euo pipefail
+exec > /var/log/wazuh-install.log 2>&1
+echo "=== Wazuh install started: $(date) ==="
 
-# Log all output for debugging
-exec > >(tee /var/log/wazuh-install.log) 2>&1
-echo "=== Wazuh Manager installation started at $(date) ==="
+# Work from root home
+cd /root
 
-# Wait for cloud-init to finish and apt to be available
-cloud-init status --wait
-while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 5; done
+# Wait for apt lock
+while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+  echo "Waiting for apt lock..."
+  sleep 5
+done
 
-# System updates
+# Update and install prereqs
 apt-get update -y
-apt-get upgrade -y
-
-# Install prerequisites
 apt-get install -y curl apt-transport-https unzip
 
-# Download and run the Wazuh installation assistant
-# This installs the complete Wazuh stack: Manager + Indexer + Dashboard
+echo "=== Downloading Wazuh installer: $(date) ==="
 curl -sO https://packages.wazuh.com/4.9/wazuh-install.sh
-curl -sO https://packages.wazuh.com/4.9/config.yml
+chmod +x wazuh-install.sh
+ls -la wazuh-install.sh
+echo "=== Download complete ==="
 
-# Generate a single-node config.yml
-cat > config.yml <<'CONFIG'
+# Generate single-node config
+cat > /root/config.yml << 'CONFIG'
 nodes:
   indexer:
-    - name: wazuh-indexer
+    - name: node-1
       ip: "127.0.0.1"
   server:
-    - name: wazuh-server
+    - name: wazuh-1
       ip: "127.0.0.1"
   dashboard:
-    - name: wazuh-dashboard
+    - name: dashboard
       ip: "127.0.0.1"
 CONFIG
 
-# Run the Wazuh installation assistant (single-node, all-in-one)
-bash wazuh-install.sh --generate-config-files
+echo "=== Running all-in-one install: $(date) ==="
+bash wazuh-install.sh -a -o
 
-bash wazuh-install.sh --wazuh-indexer wazuh-indexer
-bash wazuh-install.sh --start-cluster
+echo "=== Install complete: $(date) ==="
 
-bash wazuh-install.sh --wazuh-server wazuh-server
-bash wazuh-install.sh --wazuh-dashboard wazuh-dashboard
-
-# Extract the admin credentials
-tar -xvf wazuh-install-files.tar wazuh-install-files/wazuh-passwords.txt -C /root/
-
-# Enable Wazuh API to listen on all interfaces
+# Expose Wazuh API on all interfaces
 if [ -f /var/ossec/api/configuration/api.yaml ]; then
   sed -i 's/^  host: 127.0.0.1/  host: 0.0.0.0/' /var/ossec/api/configuration/api.yaml
   systemctl restart wazuh-manager
 fi
 
-echo "=== Wazuh Manager installation completed at $(date) ==="
-echo "=== Dashboard: https://$(curl -s https://checkip.amazonaws.com) ==="
-echo "=== Retrieve admin password from /root/wazuh-install-files/wazuh-passwords.txt ==="
+# Print credentials
+echo "=== CREDENTIALS ==="
+tar -xvf wazuh-install-files.tar wazuh-install-files/wazuh-passwords.txt -C /root/ 2>/dev/null
+cat /root/wazuh-install-files/wazuh-passwords.txt 2>/dev/null || echo "Check wazuh-install-files.tar for passwords"
+
+PUBLIC_IP=$(curl -s https://checkip.amazonaws.com)
+echo "=== Dashboard: https://$PUBLIC_IP ==="
+echo "=== Done: $(date) ==="
