@@ -61,7 +61,7 @@ resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.lab.id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = "${var.aws_region}a"
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false  # manager gets Elastic IP; agent is internal only
 
   tags = {
     Name    = "ai-csl-wazuh-lab-public"
@@ -211,6 +211,12 @@ resource "aws_instance" "wazuh_manager" {
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.wazuh_manager.id]
 
+  metadata_options {
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+    http_endpoint               = "enabled"
+  }
+
   root_block_device {
     volume_size = 30
     volume_type = "gp3"
@@ -233,6 +239,12 @@ resource "aws_instance" "wazuh_agent" {
   key_name               = var.key_name
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.wazuh_agent.id]
+
+  metadata_options {
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+    http_endpoint               = "enabled"
+  }
 
   root_block_device {
     volume_size = 20
