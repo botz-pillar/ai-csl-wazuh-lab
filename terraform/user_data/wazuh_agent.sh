@@ -24,8 +24,8 @@ apt-get update -y
 
 WAZUH_MANAGER="$MANAGER_IP" WAZUH_AGENT_NAME="$AGENT_NAME" apt-get install -y wazuh-agent
 
-# Install tools for lab exercises
-apt-get install -y nmap hydra net-tools sshpass
+# Install tools for lab exercises (no offensive tools beyond what's needed for simulations)
+apt-get install -y nmap net-tools sshpass
 
 # --- CloudVault Financial Setup ---
 
@@ -51,9 +51,11 @@ case "$AGENT_NAME" in
   "dev-server-01")
     echo "CloudVault Development Environment" > /opt/cloudvault/config/dev.conf
     mkdir -p /opt/cloudvault/dev/{scripts,credentials,temp}
-    echo "aws_access_key_id=AKIAEXAMPLE55555" > /opt/cloudvault/dev/credentials/aws-creds.txt
+    echo "# FAKE CREDENTIALS — Lab training data only" > /opt/cloudvault/dev/credentials/aws-creds.txt
+    echo "aws_access_key_id=AKIAIOSFODNN7EXAMPLE" >> /opt/cloudvault/dev/credentials/aws-creds.txt
     echo "aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" >> /opt/cloudvault/dev/credentials/aws-creds.txt
-    echo "DB_PASSWORD=cloudvault_dev_2026" > /opt/cloudvault/dev/credentials/.env
+    echo "# FAKE CREDENTIALS — Lab training data only" > /opt/cloudvault/dev/credentials/.env
+    echo "DB_PASSWORD=cloudvault_dev_2026" >> /opt/cloudvault/dev/credentials/.env
     ;;
 esac
 
@@ -77,6 +79,11 @@ cat >> /var/ossec/etc/ossec.conf << 'OSSECEOF'
   <directories check_all="yes" realtime="yes">/opt/cloudvault/config</directories>
 </syscheck>
 OSSECEOF
+
+# Download the event generation script from the lab repo
+curl -sL https://raw.githubusercontent.com/botz-pillar/ai-csl-wazuh-lab/main/scripts/generate-events.sh -o /home/ubuntu/generate-events.sh
+chmod +x /home/ubuntu/generate-events.sh
+chown ubuntu:ubuntu /home/ubuntu/generate-events.sh
 
 # Enable and start the agent
 systemctl daemon-reload

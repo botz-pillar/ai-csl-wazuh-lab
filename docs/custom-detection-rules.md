@@ -1,6 +1,6 @@
 # Writing Custom Wazuh Detection Rules
 
-This guide walks through creating a custom detection rule and testing it with `wazuh-logtest`.
+This guide walks through creating custom detection rules and testing them with `wazuh-logtest`.
 
 ## How Wazuh Rules Work
 
@@ -10,9 +10,9 @@ Rules live in: `/var/ossec/etc/rules/`
 - `local_rules.xml` — your custom rules (this is where you write new ones)
 - Other files are built-in rules (don't modify these)
 
-## Example: Detect Suspicious AssumeRole Activity
+## Example 1: Detect Rapid SSH Brute Force
 
-This rule detects when a non-admin user assumes an admin IAM role — the exact attack pattern from the CloudVault contractor incident.
+This rule detects when multiple SSH login failures happen from a single source in a short time window — the exact pattern the lab's brute force simulation generates.
 
 ### Step 1 — Write the rule
 
@@ -22,44 +22,41 @@ SSH into the Wazuh manager and edit the local rules file:
 sudo nano /var/ossec/etc/rules/local_rules.xml
 ```
 
-Add this rule:
+Add these rules:
 
 ```xml
-<group name="cloudvault,aws,privilege_escalation">
+<group name="cloudvault,custom_detection">
 
-  <!-- Detect AssumeRole to admin roles by non-admin users -->
-  <rule id="100001" level="12">
-    <if_sid>80861</if_sid>
-    <field name="aws.eventName">AssumeRole</field>
-    <field name="aws.requestParameters.roleArn">AdminRole|admin-role|AdministratorAccess</field>
-    <description>AWS IAM: User assumed an administrative role. Possible privilege escalation.</description>
+  <!-- Detect rapid SSH brute force: 10+ failures in 60 seconds -->
+  <rule id="100001" level="12" frequency="10" timeframe="60">
+    <if_matched_sid>5710</if_matched_sid>
+    <description>CloudVault: SSH brute force detected — 10+ failed logins in 60 seconds.</description>
     <mitre>
-      <id>T1078.004</id>
+      <id>T1110.001</id>
     </mitre>
-    <group>aws,privilege_escalation,</group>
+    <group>authentication_failures,brute_force,</group>
   </rule>
 
-  <!-- Detect rapid S3 downloads from sensitive buckets -->
-  <rule id="100002" level="10" frequency="5" timeframe="60">
-    <if_matched_sid>80862</if_matched_sid>
-    <field name="aws.eventName">GetObject</field>
-    <field name="aws.requestParameters.bucketName">client-docs|financial|confidential</field>
-    <description>AWS S3: Multiple downloads from sensitive bucket in short timeframe. Possible data exfiltration.</description>
+  <!-- Detect file modifications in CloudVault client data directories -->
+  <rule id="100002" level="10">
+    <if_sid>550</if_sid>
+    <field name="file">/opt/cloudvault/client-data</field>
+    <description>CloudVault: File modified in client data directory. Possible unauthorized data access.</description>
     <mitre>
-      <id>T1530</id>
+      <id>T1565.001</id>
     </mitre>
-    <group>aws,data_exfiltration,</group>
+    <group>data_integrity,fim,</group>
   </rule>
 
-  <!-- Detect attempts to stop CloudTrail logging -->
-  <rule id="100003" level="15">
-    <if_sid>80861</if_sid>
-    <field name="aws.eventName">StopLogging|DeleteTrail</field>
-    <description>AWS CloudTrail: Attempt to disable or delete audit logging. Anti-forensics activity.</description>
+  <!-- Detect creation of hidden files in suspicious locations -->
+  <rule id="100003" level="8">
+    <if_sid>554</if_sid>
+    <field name="file">^\.</field>
+    <description>CloudVault: Hidden file created. Possible attacker staging or persistence.</description>
     <mitre>
-      <id>T1562.008</id>
+      <id>T1564.001</id>
     </mitre>
-    <group>aws,defense_evasion,</group>
+    <group>defense_evasion,persistence,</group>
   </rule>
 
 </group>
@@ -73,19 +70,13 @@ Before restarting Wazuh, test your rule against a sample log:
 sudo /var/ossec/bin/wazuh-logtest
 ```
 
-Paste a sample CloudTrail AssumeRole event:
-
-```json
-{"eventVersion":"1.08","userIdentity":{"type":"IAMUser","userName":"dev-contractor-01"},"eventTime":"2026-04-03T19:48:33Z","eventSource":"sts.amazonaws.com","eventName":"AssumeRole","requestParameters":{"roleArn":"arn:aws:iam::471923845612:role/CloudVaultAdminRole","roleSessionName":"dev-contractor-01-session"}}
-```
-
-You should see output showing which decoder matched and which rule fired. If your rule matches, you'll see:
+Paste a sample SSH failure log line:
 
 ```
-**Rule id: '100001'**
-**Level: '12'**
-**Description: 'AWS IAM: User assumed an administrative role. Possible privilege escalation.'**
+Apr 10 14:30:22 dev-server-01 sshd[12345]: Failed password for invalid user fakeuser1 from 10.0.1.50 port 54321 ssh2
 ```
+
+You should see output showing which decoder matched and which rule fired. The base rule 5710 (sshd: Attempt to login using a non-existent user) should match. Your frequency-based rule 100001 fires after 10+ matching events within 60 seconds during the brute force simulation.
 
 ### Step 3 — Deploy the rule
 
@@ -109,7 +100,7 @@ Show me a summary of all loaded Wazuh rules. Are rules 100001, 100002, and 10000
 
 ### Step 4 — Test with the simulation
 
-Run the CloudVault contractor log injection script again. Your new rules should fire on the AssumeRole, the rapid S3 downloads, and the CloudTrail deletion attempts.
+Run the event generation script again on dev-server-01. Your new rules should fire on the brute force attempts, the FIM violations in /opt/cloudvault/client-data/, and the hidden file creation.
 
 Check via MCP:
 
@@ -122,8 +113,8 @@ Show me all alerts from rules 100001, 100002, and 100003 in the last 10 minutes.
 - **Rule IDs 100000-120000** are reserved for custom rules. Use this range.
 - **Level 0-3:** Informational. Level **4-7:** Low. Level **8-11:** Medium. Level **12-14:** High. Level **15:** Critical.
 - **`<if_sid>`** chains rules — your rule fires only if the parent rule already matched.
+- **`<if_matched_sid>`** with `frequency` and `timeframe` creates rate-based rules.
 - **`<field name="...">`** matches decoded fields. Use `wazuh-logtest` to see which fields are available.
-- **`frequency` + `timeframe`** creates rate-based rules (e.g., "5 events in 60 seconds").
 - **MITRE ATT&CK IDs** make your rules map to the framework automatically in the dashboard.
 
 ## Using AI to Write Rules
@@ -132,11 +123,22 @@ Ask Claude Code to generate rule XML:
 
 ```
 Write a Wazuh detection rule (XML format) that alerts when:
-- An IAM user creates a new access key for the root account
-- Set it to level 15 (critical)
-- Map it to MITRE T1098 (Account Manipulation)
+- 5 or more failed sudo attempts happen within 120 seconds
+- Set it to level 10 (medium-high)
+- Map it to MITRE T1548 (Abuse Elevation Control Mechanism)
 - Use rule ID 100004
-- Chain it from parent rule 80861 (AWS CloudTrail base rule)
+- Chain it from parent rule 5401 (sudo failed attempt)
 ```
 
 Claude will generate the XML. Review it, test with `wazuh-logtest`, then deploy.
+
+## Common Parent Rule IDs for Chaining
+
+| Parent Rule | What It Detects | Use For |
+|------------|----------------|---------|
+| 5710 | SSH failed login (invalid user) | Brute force detection |
+| 5712 | SSH failed login (valid user, wrong password) | Credential stuffing |
+| 5401 | sudo: failed attempt | Privilege escalation |
+| 5501 | Login session opened | Session monitoring |
+| 550 | File integrity: file modified | Data integrity monitoring |
+| 554 | File integrity: file added | Persistence detection |

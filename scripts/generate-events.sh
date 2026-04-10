@@ -3,6 +3,11 @@ set -euo pipefail
 
 # Generate sample security events for the AI-CSL Wazuh Lab
 # Run this script on the Wazuh AGENT machine
+#
+# SAFETY: This script only generates events on the LOCAL machine (localhost).
+# It does NOT target external systems. All artifacts are cleaned up after detection.
+# Only run this on your own lab instances. Never run attack tools against systems
+# you don't own or have explicit authorization to test.
 
 echo "============================================"
 echo "  AI-CSL Wazuh Lab — Event Generator"

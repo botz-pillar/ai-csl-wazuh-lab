@@ -20,9 +20,9 @@ variable "key_name" {
 }
 
 variable "manager_instance_type" {
-  description = "EC2 instance type for the Wazuh manager (minimum t3.medium recommended)"
+  description = "EC2 instance type for the Wazuh manager. t3.large recommended (8GB RAM for manager + indexer + dashboard). t3.medium works but dashboard will be slow."
   type        = string
-  default     = "t3.medium"
+  default     = "t3.large"
 }
 
 variable "agent_instance_type" {
