@@ -42,25 +42,39 @@ Add the Wazuh MCP server to your Claude configuration:
 }
 ```
 
-**Claude Code** — edit `~/.claude/settings.json` or your project's `.claude/settings.json`:
+**Claude Code** — add to your ContextOS workspace's `.mcp.json` or `~/.claude/settings.json`:
 
 ```json
 {
   "mcpServers": {
     "wazuh": {
-      "command": "npx",
-      "args": ["-y", "wazuh-mcp-server"],
+      "command": "python",
+      "args": ["-m", "wazuh_mcp_server"],
       "env": {
-        "WAZUH_API_URL": "https://YOUR_MANAGER_IP:55000",
-        "WAZUH_API_USER": "wazuh-wui",
-        "WAZUH_API_PASSWORD": "YOUR_API_PASSWORD"
+        "WAZUH_HOST": "YOUR_MANAGER_IP",
+        "WAZUH_PORT": "55000",
+        "WAZUH_USER": "wazuh-wui",
+        "WAZUH_PASSWORD": "YOUR_API_PASSWORD",
+        "WAZUH_PROTOCOL": "https",
+        "WAZUH_VERIFY_SSL": "false",
+        "WAZUH_INDEXER_HOST": "YOUR_MANAGER_IP",
+        "WAZUH_INDEXER_PORT": "9200",
+        "WAZUH_INDEXER_USER": "admin",
+        "WAZUH_INDEXER_PASSWORD": "YOUR_ADMIN_PASSWORD",
+        "WAZUH_INDEXER_VERIFY_SSL": "false"
       }
     }
   }
 }
 ```
 
-Replace `YOUR_MANAGER_IP` with your Wazuh manager's public IP (from `terraform output manager_public_ip`) and `YOUR_API_PASSWORD` with the password from the installation.
+Replace `YOUR_MANAGER_IP` with your Wazuh manager's public IP (from `terraform output manager_public_ip`).
+
+You need TWO passwords from the installation:
+- `wazuh-wui` password → for `WAZUH_PASSWORD` (Manager API)
+- `admin` password → for `WAZUH_INDEXER_PASSWORD` (Indexer — required for alert queries)
+
+Install the MCP server: `pip install wazuh-mcp-server` (uses the [gensecaihq/Wazuh-MCP-Server](https://github.com/gensecaihq/Wazuh-MCP-Server) which exposes 48 tools including alert search, active response, compliance checks, and agent monitoring).
 
 ### Getting Your Wazuh API Password
 

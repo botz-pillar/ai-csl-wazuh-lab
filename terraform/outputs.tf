@@ -8,9 +8,25 @@ output "manager_public_ip" {
   value       = aws_eip.wazuh_manager.public_ip
 }
 
-output "agent_private_ip" {
-  description = "Private IP of the Wazuh agent"
-  value       = aws_instance.wazuh_agent.private_ip
+output "wazuh_api_url" {
+  description = "Wazuh API URL (for MCP server config)"
+  value       = "https://${aws_eip.wazuh_manager.public_ip}:55000"
+}
+
+output "wazuh_indexer_url" {
+  description = "Wazuh Indexer URL (for MCP server alert queries)"
+  value       = "https://${aws_eip.wazuh_manager.public_ip}:9200"
+}
+
+output "cloudvault_agents" {
+  description = "CloudVault Financial agent instances"
+  value = {
+    for name, instance in aws_instance.cloudvault_agent : name => {
+      public_ip  = instance.public_ip
+      private_ip = instance.private_ip
+      ssh        = "ssh -i ~/.ssh/${var.key_name}.pem ubuntu@${instance.public_ip}"
+    }
+  }
 }
 
 output "ssh_manager_command" {
@@ -18,7 +34,16 @@ output "ssh_manager_command" {
   value       = "ssh -i ~/.ssh/${var.key_name}.pem ubuntu@${aws_eip.wazuh_manager.public_ip}"
 }
 
-output "ssh_agent_command" {
-  description = "SSH command to connect to the Wazuh agent (via manager as jump host)"
-  value       = "ssh -i ~/.ssh/${var.key_name}.pem -J ubuntu@${aws_eip.wazuh_manager.public_ip} ubuntu@${aws_instance.wazuh_agent.private_ip}"
+output "mcp_config" {
+  description = "Values needed for MCP server configuration"
+  sensitive   = true
+  value       = <<-EOT
+    WAZUH_API_URL=https://${aws_eip.wazuh_manager.public_ip}:55000
+    WAZUH_API_USER=wazuh-wui
+    WAZUH_API_PASSWORD=[get from: sudo cat /root/wazuh-install-files/wazuh-passwords.txt]
+    WAZUH_INDEXER_HOST=${aws_eip.wazuh_manager.public_ip}
+    WAZUH_INDEXER_PORT=9200
+    WAZUH_INDEXER_USER=admin
+    WAZUH_INDEXER_PASSWORD=[get from same file]
+  EOT
 }

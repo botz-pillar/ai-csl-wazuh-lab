@@ -142,6 +142,15 @@ resource "aws_security_group" "wazuh_manager" {
     cidr_blocks = [var.your_ip_cidr]
   }
 
+  # Wazuh Indexer (for MCP server alert queries)
+  ingress {
+    description = "Wazuh Indexer API"
+    from_port   = 9200
+    to_port     = 9200
+    protocol    = "tcp"
+    cidr_blocks = [var.your_ip_cidr]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -157,7 +166,7 @@ resource "aws_security_group" "wazuh_manager" {
 
 resource "aws_security_group" "wazuh_agent" {
   name        = "wazuh-agent-sg"
-  description = "Security group for Wazuh agent"
+  description = "Security group for CloudVault agent instances"
   vpc_id      = aws_vpc.lab.id
 
   # SSH from your IP
@@ -167,6 +176,15 @@ resource "aws_security_group" "wazuh_agent" {
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = [var.your_ip_cidr]
+  }
+
+  # Inter-agent traffic (for attack simulations — port scans, lateral movement)
+  ingress {
+    description = "Inter-agent lab traffic"
+    from_port   = 0
+    to_port     = 65535
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
   }
 
   egress {
@@ -233,12 +251,33 @@ resource "aws_instance" "wazuh_manager" {
   }
 }
 
-resource "aws_instance" "wazuh_agent" {
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = var.agent_instance_type
-  key_name               = var.key_name
-  subnet_id              = aws_subnet.public.id
-  vpc_security_group_ids = [aws_security_group.wazuh_agent.id]
+# --------------------------------------------------------------------------
+# CloudVault Financial Agent Instances
+# --------------------------------------------------------------------------
+
+locals {
+  cloudvault_agents = {
+    "web-server-01" = {
+      role = "CloudVault Web Server"
+    }
+    "app-server-01" = {
+      role = "CloudVault App Server"
+    }
+    "dev-server-01" = {
+      role = "CloudVault Dev Server"
+    }
+  }
+}
+
+resource "aws_instance" "cloudvault_agent" {
+  for_each = local.cloudvault_agents
+
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.agent_instance_type
+  key_name                    = var.key_name
+  subnet_id                   = aws_subnet.public.id
+  vpc_security_group_ids      = [aws_security_group.wazuh_agent.id]
+  associate_public_ip_address = true
 
   metadata_options {
     http_tokens                 = "required"
@@ -254,14 +293,15 @@ resource "aws_instance" "wazuh_agent" {
 
   user_data = templatefile("${path.module}/user_data/wazuh_agent.sh", {
     manager_ip = aws_instance.wazuh_manager.private_ip
+    agent_name = each.key
   })
 
   depends_on = [aws_instance.wazuh_manager]
 
   tags = {
-    Name        = "wazuh-agent"
+    Name        = each.key
     Project     = "ai-csl-wazuh-lab"
-    Role        = "agent"
+    Role        = each.value.role
     Environment = var.environment
   }
 }
