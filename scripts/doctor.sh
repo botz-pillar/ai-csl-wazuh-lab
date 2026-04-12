@@ -193,7 +193,7 @@ if [ -f "$CREDS_FILE" ] && [ -n "${TOKEN:-}" ]; then
   section "Alerts"
   # Use indexer directly for alert count
   ADMIN_PASS=$(awk '/The password for user admin/ {getline; print $2}' "$CREDS_FILE" | tr -d "'" || echo "")
-  if [ -n "$ADMIN_PASS" ] && [ "$INDEXER_CODE" = "401" ] || [ "$INDEXER_CODE" = "200" ]; then
+  if [ -n "$ADMIN_PASS" ] && { [ "$INDEXER_CODE" = "401" ] || [ "$INDEXER_CODE" = "200" ]; }; then
     ALERT_COUNT=$(curl -sk -u "admin:$ADMIN_PASS" --max-time 5 \
       "https://$MANAGER_IP:9200/wazuh-alerts-*/_count" 2>/dev/null | \
       python3 -c 'import sys, json; print(json.load(sys.stdin).get("count",0))' 2>/dev/null || echo "0")

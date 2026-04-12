@@ -188,10 +188,7 @@ for i in $(seq 1 5); do
   sleep 1
 done
 
-cat /etc/shadow > /dev/null 2>&1 || true
-echo "  Attempted to read /etc/shadow (audit event)"
-
-echo "[DONE] 5 failed sudo attempts + sensitive file access."
+echo "[DONE] 5 failed sudo attempts by contractor-test."
 
 # --- Scenario 4: Persistence via hidden files (MITRE T1564.001) ---
 echo ""
@@ -214,16 +211,21 @@ echo "  Created hidden file: /dev/shm/.persistence-marker"
 echo "[DONE] Persistence artifacts created."
 
 # --- Cleanup after detection window ---
+#
+# We clean up SOME artifacts (hidden files in /tmp, /dev/shm, /usr/share) so
+# the script can be re-run cleanly. But we DELIBERATELY leave contractor-test
+# on the box — it becomes a threat-hunting artifact for Lesson 4 ("find IAM-style
+# accounts that shouldn't be here"). Remove it in the cleanup lesson at the end.
 echo ""
 echo "Waiting 60 seconds for Wazuh to detect and alert on all events..."
 sleep 60
 
 echo ""
-echo "Cleaning up attack artifacts..."
+echo "Cleaning up transient artifacts (leaving contractor-test user in place for threat hunt)..."
 sudo rm -rf "/usr/share/...hidden-staging" 2>/dev/null || true
 sudo rm -f "/tmp/.cloudvault-backdoor" 2>/dev/null || true
 sudo rm -f "/dev/shm/.persistence-marker" 2>/dev/null || true
-sudo userdel -r contractor-test 2>/dev/null || true
+# NOTE: contractor-test user is INTENTIONALLY not deleted here — used by L4 Hunt 4
 
 cat << 'DONE'
 
