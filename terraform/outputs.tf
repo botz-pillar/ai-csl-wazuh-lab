@@ -8,6 +8,11 @@ output "manager_public_ip" {
   value       = aws_eip.wazuh_manager.public_ip
 }
 
+output "manager_private_ip" {
+  description = "Private IP of the Wazuh manager"
+  value       = aws_instance.wazuh_manager.private_ip
+}
+
 output "wazuh_api_url" {
   description = "Wazuh API URL (for MCP server config)"
   value       = "https://${aws_eip.wazuh_manager.public_ip}:55000"
@@ -34,16 +39,42 @@ output "ssh_manager_command" {
   value       = "ssh -i ~/.ssh/${var.key_name}.pem ubuntu@${aws_eip.wazuh_manager.public_ip}"
 }
 
-output "mcp_config" {
-  description = "Values needed for MCP server configuration"
-  sensitive   = true
+output "get_passwords_command" {
+  description = "Run this to retrieve all Wazuh passwords (admin, wazuh-wui, kibanaserver, etc.)"
+  value       = "ssh -i ~/.ssh/${var.key_name}.pem ubuntu@${aws_eip.wazuh_manager.public_ip} 'sudo cat /root/wazuh-install-files/wazuh-passwords.txt'"
+}
+
+output "next_steps" {
+  description = "What to do after terraform apply completes"
   value       = <<-EOT
-    WAZUH_API_URL=https://${aws_eip.wazuh_manager.public_ip}:55000
-    WAZUH_API_USER=wazuh-wui
-    WAZUH_API_PASSWORD=[get from: sudo cat /root/wazuh-install-files/wazuh-passwords.txt]
-    WAZUH_INDEXER_HOST=${aws_eip.wazuh_manager.public_ip}
-    WAZUH_INDEXER_PORT=9200
-    WAZUH_INDEXER_USER=admin
-    WAZUH_INDEXER_PASSWORD=[get from same file]
+
+    ========================================================
+     CloudVault Wazuh Lab - Deployment Complete
+    ========================================================
+
+    Manager IP:     ${aws_eip.wazuh_manager.public_ip}
+    Dashboard URL:  https://${aws_eip.wazuh_manager.public_ip}
+
+    NEXT STEPS:
+
+    1. Wait ~10-15 minutes for Wazuh to finish installing on the manager.
+       Check progress:
+         ssh -i ~/.ssh/${var.key_name}.pem ubuntu@${aws_eip.wazuh_manager.public_ip} 'sudo tail -f /var/log/wazuh-install.log'
+
+    2. Get passwords once install finishes:
+         ssh -i ~/.ssh/${var.key_name}.pem ubuntu@${aws_eip.wazuh_manager.public_ip} 'sudo cat /root/wazuh-install-files/wazuh-passwords.txt'
+
+       Or run the full diagnostic:
+         ./scripts/doctor.sh
+
+    3. Open the dashboard: https://${aws_eip.wazuh_manager.public_ip}
+       Username: admin
+       Password: (from step 2 — look for the admin user)
+
+    4. Agents auto-register. Verify at https://${aws_eip.wazuh_manager.public_ip}/app/endpoints-summary
+       Expected: web-server-01, app-server-01, dev-server-01 all Active.
+
+    COST: ~$0.11/hr running. Run 'terraform destroy' when done.
+
   EOT
 }

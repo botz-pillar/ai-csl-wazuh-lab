@@ -36,3 +36,15 @@ variable "environment" {
   type        = string
   default     = "lab"
 }
+
+variable "wazuh_version" {
+  description = "Wazuh version. Pinned so agent and manager versions stay in sync (Wazuh rejects agents with higher versions than the manager)."
+  type        = string
+  default     = "4.9.2"
+}
+
+variable "wazuh_installer_series" {
+  description = "Wazuh installer series (major.minor only). Used to download wazuh-install.sh. Should match the major.minor of wazuh_version."
+  type        = string
+  default     = "4.9"
+}

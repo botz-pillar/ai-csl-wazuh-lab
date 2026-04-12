@@ -241,7 +241,9 @@ resource "aws_instance" "wazuh_manager" {
     encrypted   = true
   }
 
-  user_data = file("${path.module}/user_data/wazuh_manager.sh")
+  user_data = templatefile("${path.module}/user_data/wazuh_manager.sh", {
+    wazuh_installer_series = var.wazuh_installer_series
+  })
 
   tags = {
     Name        = "wazuh-manager"
@@ -292,8 +294,9 @@ resource "aws_instance" "cloudvault_agent" {
   }
 
   user_data = templatefile("${path.module}/user_data/wazuh_agent.sh", {
-    manager_ip = aws_instance.wazuh_manager.private_ip
-    agent_name = each.key
+    manager_ip    = aws_instance.wazuh_manager.private_ip
+    agent_name    = each.key
+    wazuh_version = var.wazuh_version
   })
 
   depends_on = [aws_instance.wazuh_manager]
