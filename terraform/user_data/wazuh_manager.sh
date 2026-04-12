@@ -54,11 +54,11 @@ if [ "$HEAP_MB" -lt 1024 ]; then
   HEAP_MB=1024
 fi
 
-echo "=== Setting indexer JVM heap to ${HEAP_MB}m (total RAM: ${TOTAL_MEM_MB}m) ==="
+echo "=== Setting indexer JVM heap to $${HEAP_MB}m (total RAM: $${TOTAL_MEM_MB}m) ==="
 mkdir -p /etc/wazuh-indexer/jvm.options.d
 cat > /etc/wazuh-indexer/jvm.options.d/heap.options << HEAPEOF
--Xms${HEAP_MB}m
--Xmx${HEAP_MB}m
+-Xms$${HEAP_MB}m
+-Xmx$${HEAP_MB}m
 HEAPEOF
 
 # Restart indexer with the new heap settings
@@ -67,7 +67,7 @@ systemctl restart wazuh-indexer || true
 # Wait for indexer to be back up (max 60s)
 for i in $(seq 1 30); do
   if ss -tln | grep -q ':9200 '; then
-    echo "=== Indexer listening on :9200 after ${i}x2s ==="
+    echo "=== Indexer listening on :9200 after $${i}x2s ==="
     break
   fi
   sleep 2

@@ -1,106 +1,102 @@
-# AI-Powered SOC Lab
+# AI-Powered SOC Lab — CloudVault Financial
 
-**Learn cloud security by building a real Security Operations Center — then let AI help you analyze the threats.**
+**Learn cloud security by deploying a real SIEM, monitoring a fictional financial firm's servers, and investigating threats through an AI-powered MCP.**
 
-This lab teaches you how a modern SOC works by deploying a production-grade SIEM (Wazuh) on AWS and connecting it to an AI security analyst. You'll generate real security events, investigate alerts, and learn how AI can accelerate threat detection and response.
-
-This is a project from the [AI Cloud Security Lab (AI-CSL)](https://github.com/ai-csl) community.
+This lab is Course 3 of the [AI Cloud Security Lab (AI-CSL)](https://github.com/botz-pillar) curriculum. It pairs a production-grade Wazuh SIEM on AWS with the [Wazuh MCP Server](https://github.com/gensecaihq/Wazuh-MCP-Server) so you can investigate, hunt, and respond to incidents in natural language.
 
 ## What You'll Build
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        AWS VPC                              │
-│                                                             │
-│   ┌─────────────────────┐     ┌─────────────────────┐      │
-│   │   Wazuh Manager     │     │   Wazuh Agent        │     │
-│   │   (t3.medium)       │◄────│   (t3.micro)         │     │
-│   │                     │1514 │                      │     │
-│   │  ┌───────────────┐  │     │  Simulated workload  │     │
-│   │  │ Indexer       │  │     │  that generates       │     │
-│   │  │ Dashboard :443│  │     │  security events      │     │
-│   │  │ Manager       │  │     └─────────────────────┘      │
-│   │  └───────────────┘  │                                   │
-│   └─────────────────────┘                                   │
-│            ▲                                                │
-└────────────│────────────────────────────────────────────────┘
-             │ HTTPS :443
-             │
-   ┌─────────┴──────────┐
-   │   Your Browser      │
-   │   + AI Analyst      │
-   │   (via MCP)         │
-   └─────────────────────┘
+┌──────────────────────── AWS VPC (10.0.0.0/16) ────────────────────────┐
+│                                                                       │
+│   ┌──────────────────────┐        ┌──────────────────────────┐        │
+│   │  Wazuh Manager       │        │  CloudVault Financial     │        │
+│   │  (t3.large)          │◄──1514─│  web-server-01  (t3.micro)│        │
+│   │                      │◄──1514─│  app-server-01  (t3.micro)│        │
+│   │  Manager / Indexer   │◄──1514─│  dev-server-01  (t3.micro)│        │
+│   │  / Dashboard         │        │                           │        │
+│   └──────────┬───────────┘        └──────────────────────────┘        │
+│              │ :443 :55000 :9200                                       │
+└──────────────│────────────────────────────────────────────────────────┘
+               │
+   ┌───────────┴────────────┐
+   │  Your laptop           │
+   │  - Browser → Dashboard │
+   │  - Claude Code + MCP   │
+   │    (Docker on :3000)   │
+   └────────────────────────┘
 ```
 
 ## What You'll Learn
 
-- **SIEM Fundamentals** — How Wazuh collects, normalizes, and correlates security events
-- **Infrastructure as Code** — Deploy the entire lab with `terraform apply`
-- **Threat Detection** — Generate and investigate real alerts: brute force attacks, file integrity changes, rootkit checks, port scans
-- **AI-Powered Analysis** — Connect an AI analyst to your SIEM and ask questions like "What are the top critical alerts?" and "Are we meeting CIS benchmarks?"
-- **Cloud Cost Management** — Start/stop your lab to keep costs under $5 for a weekend
+- Deploy a production-grade SIEM (manager + indexer + dashboard) on AWS with Terraform
+- Monitor three fictional CloudVault servers with File Integrity Monitoring, SCA, and vulnerability scanning
+- Simulate 4 attack scenarios mapped to MITRE ATT&CK (SSH brute force, FIM violations, privilege escalation, persistence)
+- Investigate alerts through the Wazuh dashboard AND through Claude Code + MCP server (48 tools)
+- Hunt for threats proactively — find things the rules didn't alert on
+- Verify AI output against raw data (catch Claude being confidently wrong)
+- Write custom detection rules in XML and test with `wazuh-logtest`
+- Take active response actions (block IPs, isolate hosts) through natural language
 
 ## Cost Transparency
 
-| Resource | Hourly Cost | Weekend (48h) | Monthly |
-|----------|------------|----------------|---------|
-| Wazuh Manager (t3.medium) | $0.0416 | $2.00 | $30.37 |
-| Wazuh Agent (t3.micro) | $0.0104 | $0.50 | $7.59 |
-| EBS Storage (50GB total) | — | $0.16 | $4.00 |
-| Elastic IP (when running) | Free | Free | Free |
-| **Total** | **~$0.052** | **~$3-5** | **~$42** |
+| Resource | Hourly | 4h session | Monthly (if left running) |
+|----------|--------|------------|---------------------------|
+| Wazuh manager (t3.large) | $0.083 | $0.33 | $60.59 |
+| 3× CloudVault agents (t3.micro) | $0.031 | $0.12 | $22.78 |
+| EBS storage (~90 GB gp3) | — | — | ~$7 |
+| Elastic IP (while running) | free | free | free |
+| **Running total** | **~$0.11/hr** | **~$0.45** | **~$80–90/month** |
 
-Stop your instances when not in use. An idle Elastic IP costs $0.005/hr.
+Run `terraform destroy` when done — don't leave it running overnight. Set up a $10 AWS budget alert to catch surprises.
 
 ## Quick Start
 
 ```bash
 # 1. Clone this repo
-git clone https://github.com/ai-csl/ai-csl-wazuh-lab.git
+git clone https://github.com/botz-pillar/ai-csl-wazuh-lab.git
 cd ai-csl-wazuh-lab
 
 # 2. Configure Terraform
-cd terraform
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your IP and key pair name
+cp terraform/terraform.tfvars.example terraform/terraform.tfvars
+# Edit terraform/terraform.tfvars — set your_ip_cidr and key_name
 
-# 3. Deploy
-terraform init
-terraform apply
+# 3. Deploy (one-command: runs terraform apply, waits for install, fetches credentials)
+./scripts/bootstrap.sh
 
-# 4. Wait ~10 minutes for Wazuh to fully initialize, then open the dashboard
-# URL is printed in the Terraform output
+# 4. Verify everything is healthy
+./scripts/doctor.sh
 ```
 
-Then follow the [Lab Guide](lab-guide/01-deploy.md) step by step.
+Bootstrap takes ~12–20 minutes end-to-end (1–2 min Terraform, 10–15 min Wazuh install, 3–5 min for agents to register).
 
-## Lab Guide
-
-1. [Deploy the Lab](lab-guide/01-deploy.md) — Terraform setup and deployment
-2. [Verify Wazuh](lab-guide/02-verify.md) — Confirm services are running and agents are connected
-3. [Generate Noise](lab-guide/03-generate-noise.md) — Simulate real attacks and security events
-4. [AI Analysis](lab-guide/04-ai-analysis.md) — Connect your AI analyst and investigate
-5. [Teardown](lab-guide/05-teardown.md) — Clean up and cost management
+Then follow [Course 3 on Skool](https://skool.com/ai-csl) (members only) or the [lab-guide/](lab-guide/) files for the standalone path.
 
 ## Prerequisites
 
 - AWS account with CLI configured (`aws configure`)
 - [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.5
-- An EC2 key pair in your target region
-- Basic comfort with Linux terminal
-- (Optional) Claude or another AI assistant with MCP support for the AI analysis section
+- An EC2 key pair in `us-east-1` (or whichever region you set in `tfvars`)
+- Docker 20.10+ with Compose v2 (for the MCP server — Path A in the MCP guide)
+- Claude Code CLI (for MCP connection and AI investigation)
 
 ## Documentation
 
 - [Architecture](docs/architecture.md) — Detailed architecture and data flow
 - [Cost Breakdown](docs/costs.md) — Detailed cost analysis and optimization tips
+- [MCP Server Setup](docs/mcp-server-setup.md) — Connect Claude Code to your SIEM (48 tools)
+- [Custom Detection Rules](docs/custom-detection-rules.md) — Write, test, and deploy rules with `wazuh-logtest`
 - [Troubleshooting](docs/troubleshooting.md) — Common issues and fixes
-- [MCP Setup](mcp/README.md) — Connect Wazuh to your AI analyst
+
+## Helper Scripts
+
+- `scripts/bootstrap.sh` — one-command deploy + verify + fetch credentials
+- `scripts/doctor.sh` — diagnostic health check (prerequisites, AWS, Terraform, EC2, Wazuh services, agents, alerts)
+- `scripts/start-lab.sh` / `scripts/stop-lab.sh` — stop instances to pause costs, resume later without rebuild
 
 ## Contributing
 
-This is a community teaching resource. If you find an issue or want to improve the lab, open a PR. Keep it beginner-friendly.
+This is a teaching resource. If you find an issue or want to improve the lab, open a PR. Keep it beginner-friendly.
 
 ## License
 

@@ -10,9 +10,9 @@ Rules live in: `/var/ossec/etc/rules/`
 - `local_rules.xml` — your custom rules (this is where you write new ones)
 - Other files are built-in rules (don't modify these)
 
-## Example 1: Detect Rapid SSH Brute Force
+## Example 1: Detect Rapid File Access in CloudVault Client Data
 
-This rule detects when multiple SSH login failures happen from a single source in a short time window — the exact pattern the lab's brute force simulation generates.
+This is the rule Lesson 5 builds. It detects when 3 or more file modifications happen inside `/opt/cloudvault/client-data/` within 60 seconds — a pattern that indicates rapid unauthorized data access, not routine admin work. This is a CloudVault-specific rule; Wazuh's built-in 5720 (generic multi-event) isn't tight enough for a financial firm's client records.
 
 ### Step 1 — Write the rule
 
@@ -27,29 +27,21 @@ Add these rules:
 ```xml
 <group name="cloudvault,custom_detection">
 
-  <!-- Detect rapid SSH brute force: 10+ failures in 60 seconds -->
-  <rule id="100001" level="12" frequency="10" timeframe="60">
-    <if_matched_sid>5710</if_matched_sid>
-    <description>CloudVault: SSH brute force detected — 10+ failed logins in 60 seconds.</description>
-    <mitre>
-      <id>T1110.001</id>
-    </mitre>
-    <group>authentication_failures,brute_force,</group>
-  </rule>
-
-  <!-- Detect file modifications in CloudVault client data directories -->
-  <rule id="100002" level="10">
-    <if_sid>550</if_sid>
-    <field name="file">/opt/cloudvault/client-data</field>
-    <description>CloudVault: File modified in client data directory. Possible unauthorized data access.</description>
+  <!-- [100001] Rapid FIM changes on CloudVault client data -->
+  <!-- Chains from 550 (FIM checksum changed). Fires when 3+ FIM events match -->
+  <!-- the client-data path within a 60-second window. -->
+  <rule id="100001" level="12" frequency="3" timeframe="60">
+    <if_matched_sid>550</if_matched_sid>
+    <field name="file">^/opt/cloudvault/client-data</field>
+    <description>CloudVault: 3+ rapid file modifications in client-data — possible unauthorized data access.</description>
     <mitre>
       <id>T1565.001</id>
     </mitre>
-    <group>data_integrity,fim,</group>
+    <group>data_integrity,fim,cloudvault,</group>
   </rule>
 
-  <!-- Detect creation of hidden files in suspicious locations -->
-  <rule id="100003" level="8">
+  <!-- [100002] Hidden file created in a suspicious location -->
+  <rule id="100002" level="8">
     <if_sid>554</if_sid>
     <field name="file">^\.</field>
     <description>CloudVault: Hidden file created. Possible attacker staging or persistence.</description>
@@ -59,24 +51,35 @@ Add these rules:
     <group>defense_evasion,persistence,</group>
   </rule>
 
+  <!-- [100003] Example SSH brute force rule — note: this is effectively a
+       duplicate of built-in rule 5720 and is included here as a reference
+       ONLY. For your own second rule, pick something CloudVault-specific that
+       isn't already covered by a built-in rule. -->
+  <rule id="100003" level="12" frequency="10" timeframe="60">
+    <if_matched_sid>5710</if_matched_sid>
+    <description>Reference: 10+ failed SSH logins in 60 seconds (duplicates 5720).</description>
+    <mitre>
+      <id>T1110.001</id>
+    </mitre>
+    <group>authentication_failures,brute_force,</group>
+  </rule>
+
 </group>
 ```
 
 ### Step 2 — Test with wazuh-logtest
 
-Before restarting Wazuh, test your rule against a sample log:
+Before restarting Wazuh, test your rule against a real FIM alert from your environment. Grab one from the dashboard (Security Events → filter on rule 550 → pick an event on `/opt/cloudvault/client-data/` → "View alert details" → copy the raw JSON).
 
 ```bash
 sudo /var/ossec/bin/wazuh-logtest
 ```
 
-Paste a sample SSH failure log line:
+Paste the JSON log. You should see:
+- Rule 550 (FIM checksum changed) matching as the parent
+- Rule 100001 firing once the frequency threshold is reached (run it 3 times within 60 seconds to see the composite rule fire)
 
-```
-Apr 10 14:30:22 dev-server-01 sshd[12345]: Failed password for invalid user fakeuser1 from 10.0.1.50 port 54321 ssh2
-```
-
-You should see output showing which decoder matched and which rule fired. The base rule 5710 (sshd: Attempt to login using a non-existent user) should match. Your frequency-based rule 100001 fires after 10+ matching events within 60 seconds during the brute force simulation.
+If rule 100001 doesn't fire, check: (a) the `<field name="file">` regex — Wazuh uses OSSEC regex, not PCRE; (b) that your FIM alert actually includes `syscheck.path` starting with `/opt/cloudvault/client-data`; (c) that 3 events fit inside the 60-second window.
 
 ### Step 3 — Deploy the rule
 
@@ -100,7 +103,7 @@ Show me a summary of all loaded Wazuh rules. Are rules 100001, 100002, and 10000
 
 ### Step 4 — Test with the simulation
 
-Run the event generation script again on dev-server-01. Your new rules should fire on the brute force attempts, the FIM violations in /opt/cloudvault/client-data/, and the hidden file creation.
+Run the event generation script again on dev-server-01. Your new rules should fire on the FIM violations in /opt/cloudvault/client-data/ (rule 100001), the hidden file creation (rule 100002), and — if you kept the reference rule — the SSH brute force (rule 100003).
 
 Check via MCP:
 
