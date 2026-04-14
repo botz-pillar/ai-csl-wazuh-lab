@@ -61,7 +61,16 @@ cat > /etc/wazuh-indexer/jvm.options.d/heap.options << HEAPEOF
 -Xmx$${HEAP_MB}m
 HEAPEOF
 
-# Restart indexer with the new heap settings
+# --- Indexer network binding ---
+# By default, wazuh-install.sh binds the indexer to 127.0.0.1 (from our
+# config.yml). The MCP server and doctor.sh both need external access, so
+# we rebind to 0.0.0.0 before the restart below. The security group still
+# restricts :9200 access to YOUR_IP, so this is only a lab convenience, not
+# a production exposure.
+echo "=== Rebinding indexer from 127.0.0.1 to 0.0.0.0 ==="
+sed -i 's/^network.host: .*/network.host: "0.0.0.0"/' /etc/wazuh-indexer/opensearch.yml
+
+# Restart indexer with the new heap settings + network binding
 systemctl restart wazuh-indexer || true
 
 # Wait for indexer to be back up (max 60s)
@@ -76,8 +85,32 @@ done
 # Expose Wazuh API on all interfaces (default binds to 127.0.0.1)
 if [ -f /var/ossec/api/configuration/api.yaml ]; then
   sed -i 's/^  host: 127.0.0.1/  host: 0.0.0.0/' /var/ossec/api/configuration/api.yaml
-  systemctl restart wazuh-manager
 fi
+
+# --- Automatic active-response triggers ---
+# By default, ossec.conf has a commented-out <active-response> block template.
+# We add real triggers so students see attacks auto-mitigated on top of the
+# manual-via-MCP flow in Lesson 5.
+#
+# - Rule 5712 (SSH brute force composite) → firewall-drop the source IP for 5 min
+# - Rule 5720 (multiple auth failures)    → same, broader catch
+# - Rule 100005 (CloudVault hidden-artifact, added in L5) → firewall-drop
+#
+# Timeout 300s = auto-rollback after 5 minutes so the lab doesn't accumulate
+# iptables rules. For a production deploy, students learn to raise/remove
+# the timeout deliberately.
+echo "=== Adding automatic active-response triggers ==="
+sed -i '/<\/ossec_config>/i\
+\
+<!-- Automatic active-response triggers (AI-CSL lab) -->\
+<active-response>\
+  <command>firewall-drop</command>\
+  <location>local</location>\
+  <rules_id>5712,5720</rules_id>\
+  <timeout>300</timeout>\
+</active-response>' /var/ossec/etc/ossec.conf
+
+systemctl restart wazuh-manager
 
 # Extract credentials to /root/wazuh-install-files/ so they can be retrieved
 # later (by terraform remote-exec, by students via SSH, or by doctor.sh)

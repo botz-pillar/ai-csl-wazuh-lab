@@ -92,50 +92,66 @@ echo ""
 
 ATTEMPT=0
 MAX_ATTEMPTS=60  # 60 * 30s = 30 minutes max
+SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5"
 
+# Definitive "install done" signal: the Wazuh installer writes
+# /root/wazuh-install-files/wazuh-passwords.txt only AFTER every service is up.
+# The API starts responding 4-5 minutes before that, so polling the API has a
+# race. Poll the passwords file directly instead.
 while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
   ATTEMPT=$((ATTEMPT + 1))
-  # Check if the Wazuh API is responding (returns 401 when up, auth required)
-  HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 5 "https://$MANAGER_IP:55000/" || echo "000")
-  if [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "200" ]; then
-    success "Wazuh API is responding (attempt $ATTEMPT)"
+  if ssh -i ~/.ssh/$KEY_NAME.pem $SSH_OPTS ubuntu@$MANAGER_IP \
+    'sudo test -f /root/wazuh-install-files/wazuh-passwords.txt' 2>/dev/null; then
+    success "Wazuh install complete (attempt $ATTEMPT — passwords file present)"
     break
   fi
-  printf "  [%02d/%02d] Waiting for Wazuh API... (HTTP %s)\r" "$ATTEMPT" "$MAX_ATTEMPTS" "$HTTP_CODE"
+  printf "  [%02d/%02d] Waiting for Wazuh install to finish... \r" "$ATTEMPT" "$MAX_ATTEMPTS"
   sleep 30
 done
 
 echo ""
 if [ $ATTEMPT -ge $MAX_ATTEMPTS ]; then
-  warn "Wazuh API not responding after 30 minutes."
+  warn "Wazuh install did not complete after 30 minutes."
   warn "Check the install log:"
   warn "  ssh -i ~/.ssh/$KEY_NAME.pem ubuntu@$MANAGER_IP 'sudo tail -50 /var/log/wazuh-install.log'"
   exit 1
 fi
 
-# --- Wait for indexer ---
-info "Verifying Wazuh Indexer is up..."
+# --- Verify API reachable ---
+info "Verifying Wazuh API is reachable on :55000..."
 for i in $(seq 1 10); do
+  HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 5 "https://$MANAGER_IP:55000/" || echo "000")
+  if [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "200" ]; then
+    success "API responding on :55000"
+    break
+  fi
+  [ $i -eq 10 ] && warn "API not responding. Check security group :55000 rule."
+  sleep 5
+done
+
+# --- Verify indexer reachable ---
+info "Verifying Wazuh Indexer is up..."
+for i in $(seq 1 20); do
   HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 5 "https://$MANAGER_IP:9200/" || echo "000")
   if [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "200" ]; then
     success "Indexer responding on :9200"
     break
   fi
-  if [ $i -eq 10 ]; then
-    warn "Indexer not responding on :9200. Alert queries will fail until it's up."
-    warn "Run ./scripts/doctor.sh to diagnose."
+  if [ $i -eq 20 ]; then
+    warn "Indexer not responding on :9200 after 100s."
+    warn "If this persists, run ./scripts/doctor.sh to diagnose (often a network.host binding issue)."
   fi
-  sleep 10
+  sleep 5
 done
 
 # --- Fetch credentials ---
 echo ""
 info "Retrieving Wazuh credentials..."
-PASSWORDS=$(ssh -i ~/.ssh/$KEY_NAME.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+PASSWORDS=$(ssh -i ~/.ssh/$KEY_NAME.pem $SSH_OPTS \
   ubuntu@$MANAGER_IP 'sudo cat /root/wazuh-install-files/wazuh-passwords.txt 2>/dev/null' 2>/dev/null || echo "")
 
 if [ -z "$PASSWORDS" ]; then
-  warn "Could not fetch passwords. Try again in a minute:"
+  warn "Could not fetch passwords — unexpected since install is complete. Try manually:"
   warn "  ssh -i ~/.ssh/$KEY_NAME.pem ubuntu@$MANAGER_IP 'sudo cat /root/wazuh-install-files/wazuh-passwords.txt'"
 else
   # Save to local file for convenience
@@ -150,10 +166,18 @@ info "Waiting for all 3 agents to register with the manager..."
 info "(Agents need ~5-10 more minutes after the manager is up.)"
 info "This step is optional — you can Ctrl+C and check agent status later with doctor.sh."
 
-ADMIN_PASS=$(echo "$PASSWORDS" | awk '/The password for user admin/ {getline; print $2}' | tr -d "'" || echo "")
-if [ -n "$ADMIN_PASS" ]; then
+# Parse passwords file. Actual format (Wazuh 4.9.x):
+#   # Admin user for the web user interface and Wazuh indexer...
+#     indexer_username: 'admin'
+#     indexer_password: 'SECRET'
+#
+# We grep for the user line, read the line below, and extract the quoted value.
+ADMIN_PASS=$(echo "$PASSWORDS" | grep -A1 "indexer_username: 'admin'"   | tail -1 | grep -oE "'[^']+'" | tr -d "'")
+WUI_PASS=$(echo "$PASSWORDS"   | grep -A1 "api_username: 'wazuh-wui'"   | tail -1 | grep -oE "'[^']+'" | tr -d "'")
+
+if [ -n "$ADMIN_PASS" ] && [ -n "$WUI_PASS" ]; then
   for i in $(seq 1 20); do
-    ACTIVE_AGENTS=$(curl -sk --max-time 5 -u "wazuh-wui:$(echo "$PASSWORDS" | awk '/The password for user wazuh-wui/ {getline; print $2}' | tr -d "'")" \
+    ACTIVE_AGENTS=$(curl -sk --max-time 5 -u "wazuh-wui:$WUI_PASS" \
       "https://$MANAGER_IP:55000/agents?status=active&limit=10" 2>/dev/null | \
       python3 -c 'import sys, json; d=json.load(sys.stdin); print(d.get("data",{}).get("total_affected_items",0))' 2>/dev/null || echo "0")
     if [ "$ACTIVE_AGENTS" -ge 4 ]; then

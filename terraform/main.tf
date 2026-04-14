@@ -178,6 +178,31 @@ resource "aws_security_group" "wazuh_agent" {
     cidr_blocks = [var.your_ip_cidr]
   }
 
+  # CloudVault Customer Portal (nginx on web-server-01)
+  ingress {
+    description = "CloudVault portal HTTP (redirects to HTTPS)"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = [var.your_ip_cidr]
+  }
+  ingress {
+    description = "CloudVault portal HTTPS"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [var.your_ip_cidr]
+  }
+
+  # CloudVault API (Python HTTPS daemon on app-server-01)
+  ingress {
+    description = "CloudVault API HTTPS"
+    from_port   = 8443
+    to_port     = 8443
+    protocol    = "tcp"
+    cidr_blocks = [var.your_ip_cidr]
+  }
+
   # Inter-agent traffic (for attack simulations — port scans, lateral movement)
   ingress {
     description = "Inter-agent lab traffic"

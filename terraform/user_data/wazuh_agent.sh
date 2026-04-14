@@ -37,27 +37,223 @@ mkdir -p /opt/cloudvault/{client-data,financial-records,config,logs}
 
 case "$AGENT_NAME" in
   "web-server-01")
+    # --- CloudVault Customer Portal: real nginx on :80 + TLS on :443 ---
+    # Goal: a realistic web server students can actually curl, with real
+    # access.log / error.log for FIM and threat hunting. Self-signed TLS.
     echo "CloudVault Customer Portal - Production" > /opt/cloudvault/config/app.conf
     echo "server.port=443" >> /opt/cloudvault/config/app.conf
     echo "server.ssl=true" >> /opt/cloudvault/config/app.conf
     echo "session.timeout=3600" >> /opt/cloudvault/config/app.conf
-    apt-get install -y nginx
+
+    apt-get install -y nginx openssl
+
+    # Generate self-signed TLS cert (valid 1 year, RSA 2048)
+    mkdir -p /etc/nginx/ssl
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+      -keyout /etc/nginx/ssl/cloudvault.key \
+      -out /etc/nginx/ssl/cloudvault.crt \
+      -subj "/C=US/ST=NY/L=NewYork/O=CloudVault Financial/CN=portal.cloudvault.internal" 2>/dev/null
+    chmod 600 /etc/nginx/ssl/cloudvault.key
+
+    # Simple customer portal page
+    cat > /var/www/html/index.html << 'HTMLEOF'
+<!DOCTYPE html>
+<html>
+<head><title>CloudVault Financial — Client Portal</title></head>
+<body style="font-family:sans-serif;max-width:800px;margin:2em auto;">
+  <h1>CloudVault Financial</h1>
+  <p>Secure client portal. Please sign in to access your account.</p>
+  <form><input placeholder="Email" /><br/><input type="password" placeholder="Password" /><br/><button>Sign in</button></form>
+  <hr/>
+  <p style="color:#666;font-size:0.8em;">CloudVault Financial Services — AUM $2.1B — SOC 2 Type II</p>
+</body>
+</html>
+HTMLEOF
+
+    # Nginx config: HTTP redirect + HTTPS with TLS
+    cat > /etc/nginx/sites-available/cloudvault << 'NGINXEOF'
+server {
+  listen 80 default_server;
+  listen [::]:80 default_server;
+  return 301 https://$host$request_uri;
+}
+server {
+  listen 443 ssl default_server;
+  listen [::]:443 ssl default_server;
+  ssl_certificate /etc/nginx/ssl/cloudvault.crt;
+  ssl_certificate_key /etc/nginx/ssl/cloudvault.key;
+  server_name _;
+  root /var/www/html;
+  index index.html;
+  access_log /var/log/nginx/cloudvault-access.log;
+  error_log /var/log/nginx/cloudvault-error.log;
+}
+NGINXEOF
+    ln -sf /etc/nginx/sites-available/cloudvault /etc/nginx/sites-enabled/default
+    systemctl enable nginx
+    systemctl restart nginx
     ;;
+
   "app-server-01")
+    # --- CloudVault API: real Python HTTPS daemon on :8443 + custom log ---
+    # Goal: a listening service students can hit, with a custom application
+    # log at /var/log/cloudvault-api.log that Wazuh parses. Teaches custom
+    # log forwarding (a high-value SOC skill).
     echo "CloudVault API Server - Production" > /opt/cloudvault/config/api.conf
     echo "api.port=8443" >> /opt/cloudvault/config/api.conf
     echo "db.host=cloudvault-prod-db.internal" >> /opt/cloudvault/config/api.conf
     echo "db.port=5432" >> /opt/cloudvault/config/api.conf
     echo "api.rate_limit=100" >> /opt/cloudvault/config/api.conf
+
+    apt-get install -y python3 python3-pip openssl
+
+    mkdir -p /opt/cloudvault/api /etc/cloudvault-api/ssl
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+      -keyout /etc/cloudvault-api/ssl/api.key \
+      -out /etc/cloudvault-api/ssl/api.crt \
+      -subj "/C=US/ST=NY/L=NewYork/O=CloudVault Financial/CN=api.cloudvault.internal" 2>/dev/null
+    chmod 600 /etc/cloudvault-api/ssl/api.key
+
+    # The API daemon — minimal Python, no external deps.
+    # Logs to /var/log/cloudvault-api.log in a syslog-parseable format:
+    #   Apr 14 00:00:00 hostname cloudvault-api[PID]: LEVEL message
+    cat > /opt/cloudvault/api/server.py << 'PYEOF'
+#!/usr/bin/env python3
+"""CloudVault API — minimal HTTPS server for lab purposes."""
+import http.server, ssl, json, logging, logging.handlers, sys, os
+from http.server import BaseHTTPRequestHandler
+
+LOG_PATH = "/var/log/cloudvault-api.log"
+logging.basicConfig(
+    filename=LOG_PATH,
+    level=logging.INFO,
+    format="%(asctime)s %(hostname)s cloudvault-api[%(process)d]: %(levelname)s %(message)s",
+    datefmt="%b %d %H:%M:%S",
+)
+# Inject hostname into every record
+_hostname = os.uname().nodename
+old_factory = logging.getLogRecordFactory()
+def _factory(*a, **kw):
+    r = old_factory(*a, **kw); r.hostname = _hostname; return r
+logging.setLogRecordFactory(_factory)
+log = logging.getLogger("cloudvault-api")
+
+CLIENTS = {
+    "CV-001": {"name": "Peterson Trust",       "aum": 4500000},
+    "CV-002": {"name": "Morrison Family",      "aum": 2100000},
+    "CV-003": {"name": "Chen Holdings",        "aum": 8900000},
+    "CV-004": {"name": "Wellington Partners",  "aum": 12300000},
+    "CV-005": {"name": "Nakamura Estate",      "aum": 3200000},
+}
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args): pass  # suppress stderr access log
+    def _json(self, code, payload):
+        body = json.dumps(payload).encode()
+        self.send_response(code); self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+    def do_GET(self):
+        src = self.client_address[0]
+        if self.path == "/health":
+            log.info(f"health_check src={src} status=200")
+            return self._json(200, {"status": "ok", "service": "cloudvault-api"})
+        if self.path == "/api/accounts":
+            log.info(f"accounts_list src={src} count={len(CLIENTS)}")
+            return self._json(200, {"accounts": list(CLIENTS.values())})
+        if self.path.startswith("/api/accounts/"):
+            cid = self.path.rsplit("/", 1)[-1]
+            if cid in CLIENTS:
+                log.info(f"account_read src={src} client_id={cid}")
+                return self._json(200, CLIENTS[cid])
+            log.warning(f"account_read src={src} client_id={cid} status=404")
+            return self._json(404, {"error": "not found"})
+        log.warning(f"unknown_path src={src} path={self.path}")
+        self._json(404, {"error": "not found"})
+
+if __name__ == "__main__":
+    log.info("cloudvault-api starting port=8443")
+    httpd = http.server.HTTPServer(("0.0.0.0", 8443), Handler)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain("/etc/cloudvault-api/ssl/api.crt", "/etc/cloudvault-api/ssl/api.key")
+    httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+    log.info("cloudvault-api listening port=8443 tls=true")
+    try: httpd.serve_forever()
+    except KeyboardInterrupt: log.info("cloudvault-api stopping")
+PYEOF
+    chmod +x /opt/cloudvault/api/server.py
+    touch /var/log/cloudvault-api.log
+    chmod 644 /var/log/cloudvault-api.log
+
+    # systemd unit so the API starts on boot
+    cat > /etc/systemd/system/cloudvault-api.service << 'SVCEOF'
+[Unit]
+Description=CloudVault API (lab)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/cloudvault/api/server.py
+Restart=on-failure
+StandardOutput=append:/var/log/cloudvault-api.log
+StandardError=append:/var/log/cloudvault-api.log
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+    systemctl daemon-reload
+    systemctl enable cloudvault-api
+    systemctl start cloudvault-api
+
+    # Tell Wazuh to tail the custom API log — it parses as syslog format
+    # (our Python logger emits "Apr 14 HH:MM:SS hostname cloudvault-api[PID]: LEVEL message").
+    # This gets decoded by Wazuh's syslog decoder and the message is searchable via MCP.
+    sed -i '/<\/ossec_config>/i\
+\
+<!-- CloudVault API custom application log -->\
+<localfile>\
+  <log_format>syslog</log_format>\
+  <location>/var/log/cloudvault-api.log</location>\
+</localfile>' /var/ossec/etc/ossec.conf
     ;;
+
   "dev-server-01")
+    # --- CloudVault dev environment: real dev tools installed ---
+    # Goal: looks like a genuine dev box to threat hunters. Real interpreters,
+    # git, build tools. No fake services — it's a workstation, not a server.
     echo "CloudVault Development Environment" > /opt/cloudvault/config/dev.conf
+
+    apt-get install -y git build-essential python3-pip nodejs npm
+
     mkdir -p /opt/cloudvault/dev/{scripts,credentials,temp}
-    echo "# FAKE CREDENTIALS - Lab training data only" > /opt/cloudvault/dev/credentials/aws-creds.txt
-    echo "aws_access_key_id=AKIAIOSFODNN7EXAMPLE" >> /opt/cloudvault/dev/credentials/aws-creds.txt
-    echo "aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" >> /opt/cloudvault/dev/credentials/aws-creds.txt
-    echo "# FAKE CREDENTIALS - Lab training data only" > /opt/cloudvault/dev/credentials/.env
-    echo "DB_PASSWORD=cloudvault_dev_2026" >> /opt/cloudvault/dev/credentials/.env
+    # These creds are INTENTIONALLY present — students find them during
+    # threat hunting / find a CloudVault security gap (hardcoded secrets in
+    # a dev environment). Uses AWS's official example key for safety.
+    cat > /opt/cloudvault/dev/credentials/aws-creds.txt << 'CREDEOF'
+# FAKE CREDENTIALS - Lab training data only
+aws_access_key_id=AKIAIOSFODNN7EXAMPLE
+aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+CREDEOF
+    cat > /opt/cloudvault/dev/credentials/.env << 'ENVEOF'
+# FAKE CREDENTIALS - Lab training data only
+DB_PASSWORD=cloudvault_dev_2026
+API_TOKEN=dev_token_never_rotated_since_2024
+ENVEOF
+
+    # A realistic git repo structure so threat hunts have something to find
+    cd /opt/cloudvault/dev
+    git init -q scripts 2>/dev/null || true
+    cd scripts
+    cat > ingest.py << 'PYEOF'
+#!/usr/bin/env python3
+"""CloudVault nightly client ingest (dev copy)."""
+import os, sys, json, logging
+# TODO: rotate this credential before moving to production
+API_TOKEN = os.environ.get("API_TOKEN", "dev_token_never_rotated_since_2024")
+logging.basicConfig(level=logging.INFO)
+def main(): logging.info("ingest starting, token=%s...", API_TOKEN[:12])
+if __name__ == "__main__": main()
+PYEOF
+    chmod +x ingest.py
     ;;
 esac
 
@@ -81,9 +277,15 @@ CV-004,Q1-2026,15375,3100,18475
 CV-005,Q1-2026,4000,800,4800
 FEESEOF
 
-# Configure FIM for CloudVault directories.
-# Must use sed to insert BEFORE </ossec_config> — appending produces invalid XML
-# and the agent fails to start with "Invalid element in the configuration".
+# Configure FIM for CloudVault directories AND add an auth.log logcollector.
+#
+# The default Wazuh 4.9 agent reads auth events via journald, which is less
+# reliable in our teaching context: if the manager restarts during a lesson
+# (rule deployment, etc.), journald's cursor can skip events. /var/log/auth.log
+# is the textbook Linux auth-monitoring target — stable, catches everything
+# sshd/sudo/PAM write. We add it explicitly as a logcollector block.
+#
+# Must use sed to insert BEFORE </ossec_config> — appending produces invalid XML.
 sed -i '/<\/ossec_config>/i\
 \
 <!-- CloudVault Financial - Custom FIM monitoring -->\
@@ -91,7 +293,13 @@ sed -i '/<\/ossec_config>/i\
   <directories check_all="yes" realtime="yes" report_changes="yes">/opt/cloudvault/client-data</directories>\
   <directories check_all="yes" realtime="yes" report_changes="yes">/opt/cloudvault/financial-records</directories>\
   <directories check_all="yes" realtime="yes">/opt/cloudvault/config</directories>\
-</syscheck>' /var/ossec/etc/ossec.conf
+</syscheck>\
+\
+<!-- Explicit auth.log tail (more reliable than the default journald reader) -->\
+<localfile>\
+  <log_format>syslog</log_format>\
+  <location>/var/log/auth.log</location>\
+</localfile>' /var/ossec/etc/ossec.conf
 
 # --- Install the event generation script INLINE (no external URL dependency) ---
 cat > /home/ubuntu/generate-events.sh << 'GENEVENTSEOF'
@@ -172,23 +380,30 @@ echo "[DONE] Client data and financial records modified."
 # --- Scenario 3: Privilege escalation (MITRE T1548) ---
 echo ""
 echo "--- [3/4] Privilege escalation attempts ---"
-echo "What this does: creates a suspicious user and runs failed sudo attempts."
-echo "How Wazuh detects it: sudo/PAM writes to /var/log/auth.log. Failed"
-echo "elevation attempts match rule 5401 (sudo failed attempt). Rule 5402"
-echo "triggers when the user isn't in the sudoers file. Rule 5301 covers"
-echo "failed 'su' attempts."
+echo "What this does: creates a user (contractor-test) who is NOT in the"
+echo "sudoers file, then has that user attempt sudo. Each attempt is"
+echo "rejected and logged as a clear privilege-escalation failure."
+echo ""
+echo "How Wazuh detects it: sudo writes 'user NOT in sudoers' to"
+echo "/var/log/auth.log. The log collector (explicit <localfile> on"
+echo "auth.log) forwards each event to the manager. Rule 5401 fires on"
+echo "'user NOT in sudoers' — a clean, specific privilege-escalation"
+echo "signal with no false positives."
 echo ""
 
 sudo useradd -m -s /bin/bash contractor-test 2>/dev/null || true
-echo "  Created suspicious user: contractor-test"
+echo "  Created user: contractor-test (NOT granted sudo)"
 
 for i in $(seq 1 5); do
-  su - contractor-test -c "sudo -S cat /etc/shadow" <<< "wrongpassword" 2>/dev/null || true
-  echo "  Failed sudo attempt $i/5 (contractor-test trying /etc/shadow)"
+  # Run sudo AS contractor-test. Because they aren't in sudoers, sudo writes
+  # 'user NOT in sudoers' to auth.log — the pattern rule 5401 matches cleanly.
+  # `-n` makes sudo non-interactive so it doesn't hang waiting for a password.
+  sudo -u contractor-test sudo -n /usr/bin/cat /etc/shadow 2>/dev/null || true
+  echo "  Attempt $i/5: contractor-test tried sudo cat /etc/shadow — REJECTED"
   sleep 1
 done
 
-echo "[DONE] 5 failed sudo attempts by contractor-test."
+echo "[DONE] 5 failed sudo attempts by contractor-test — expect 5x rule 5401."
 
 # --- Scenario 4: Persistence via hidden files (MITRE T1564.001) ---
 echo ""

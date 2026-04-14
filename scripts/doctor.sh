@@ -161,7 +161,11 @@ fi
 section "Agents"
 CREDS_FILE="$REPO_ROOT/.lab-credentials.txt"
 if [ -f "$CREDS_FILE" ]; then
-  WUI_PASS=$(awk '/The password for user wazuh-wui/ {getline; print $2}' "$CREDS_FILE" | tr -d "'" || echo "")
+  # Parse wazuh-wui API password. Format (Wazuh 4.9.x):
+  #   # Password for wazuh-wui API user
+  #     api_username: 'wazuh-wui'
+  #     api_password: 'SECRET'
+  WUI_PASS=$(grep -A1 "api_username: 'wazuh-wui'" "$CREDS_FILE" | tail -1 | grep -oE "'[^']+'" | tr -d "'")
   if [ -n "$WUI_PASS" ]; then
     # Get auth token
     TOKEN=$(curl -sk -u "wazuh-wui:$WUI_PASS" -X POST "https://$MANAGER_IP:55000/security/user/authenticate" 2>/dev/null | \
@@ -192,7 +196,7 @@ fi
 if [ -f "$CREDS_FILE" ] && [ -n "${TOKEN:-}" ]; then
   section "Alerts"
   # Use indexer directly for alert count
-  ADMIN_PASS=$(awk '/The password for user admin/ {getline; print $2}' "$CREDS_FILE" | tr -d "'" || echo "")
+  ADMIN_PASS=$(grep -A1 "indexer_username: 'admin'" "$CREDS_FILE" | tail -1 | grep -oE "'[^']+'" | tr -d "'")
   if [ -n "$ADMIN_PASS" ] && { [ "$INDEXER_CODE" = "401" ] || [ "$INDEXER_CODE" = "200" ]; }; then
     ALERT_COUNT=$(curl -sk -u "admin:$ADMIN_PASS" --max-time 5 \
       "https://$MANAGER_IP:9200/wazuh-alerts-*/_count" 2>/dev/null | \
