@@ -266,9 +266,12 @@ resource "aws_instance" "wazuh_manager" {
     encrypted   = true
   }
 
-  user_data = templatefile("${path.module}/user_data/wazuh_manager.sh", {
+  # Use gzip+base64 encoding so we don't hit the 16KB user_data limit as the
+  # install script grows. cloud-init detects the gzip magic bytes and
+  # decompresses automatically.
+  user_data_base64 = base64gzip(templatefile("${path.module}/user_data/wazuh_manager.sh", {
     wazuh_installer_series = var.wazuh_installer_series
-  })
+  }))
 
   tags = {
     Name        = "wazuh-manager"
@@ -318,11 +321,14 @@ resource "aws_instance" "cloudvault_agent" {
     encrypted   = true
   }
 
-  user_data = templatefile("${path.module}/user_data/wazuh_agent.sh", {
+  # gzip+base64 required — the agent user_data exceeds AWS's 16KB limit due
+  # to the inline CloudVault workload setup (nginx config, Python API daemon,
+  # generate-events.sh). cloud-init detects the gzip magic bytes and decompresses.
+  user_data_base64 = base64gzip(templatefile("${path.module}/user_data/wazuh_agent.sh", {
     manager_ip    = aws_instance.wazuh_manager.private_ip
     agent_name    = each.key
     wazuh_version = var.wazuh_version
-  })
+  }))
 
   depends_on = [aws_instance.wazuh_manager]
 
