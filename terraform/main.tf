@@ -6,6 +6,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    cloudinit = {
+      source  = "hashicorp/cloudinit"
+      version = "~> 2.3"
+    }
   }
 }
 
@@ -203,7 +207,10 @@ resource "aws_security_group" "wazuh_agent" {
     cidr_blocks = [var.your_ip_cidr]
   }
 
-  # Inter-agent traffic (for attack simulations — port scans, lateral movement)
+  # Inter-agent traffic (for attack simulations — port scans, lateral movement,
+  # and SSH brute force from dev-server-01 → web-server-01 in scenario 1).
+  # Wide TCP range is intentional for lab; production would restrict to specific
+  # service ports only.
   ingress {
     description = "Inter-agent lab traffic"
     from_port   = 0
@@ -266,12 +273,10 @@ resource "aws_instance" "wazuh_manager" {
     encrypted   = true
   }
 
-  # Use gzip+base64 encoding so we don't hit the 16KB user_data limit as the
-  # install script grows. cloud-init detects the gzip magic bytes and
-  # decompresses automatically.
-  user_data_base64 = base64gzip(templatefile("${path.module}/user_data/wazuh_manager.sh", {
-    wazuh_installer_series = var.wazuh_installer_series
-  }))
+  # Wrap our shell script in a proper cloud-init MIME archive with gzip+base64
+  # so we stay under AWS's 16KB user_data limit. Plain `base64gzip()` doesn't
+  # work — cloud-init needs the MIME wrapper to recognize the content type.
+  user_data_base64 = data.cloudinit_config.manager.rendered
 
   tags = {
     Name        = "wazuh-manager"
@@ -321,14 +326,10 @@ resource "aws_instance" "cloudvault_agent" {
     encrypted   = true
   }
 
-  # gzip+base64 required — the agent user_data exceeds AWS's 16KB limit due
-  # to the inline CloudVault workload setup (nginx config, Python API daemon,
-  # generate-events.sh). cloud-init detects the gzip magic bytes and decompresses.
-  user_data_base64 = base64gzip(templatefile("${path.module}/user_data/wazuh_agent.sh", {
-    manager_ip    = aws_instance.wazuh_manager.private_ip
-    agent_name    = each.key
-    wazuh_version = var.wazuh_version
-  }))
+  # Cloud-init MIME archive with gzip+base64 — see cloudinit_config data
+  # source below. Required because the agent script with inline workload
+  # setup exceeds AWS's 16KB raw user_data limit (~20KB uncompressed).
+  user_data_base64 = data.cloudinit_config.agent[each.key].rendered
 
   depends_on = [aws_instance.wazuh_manager]
 
@@ -337,5 +338,43 @@ resource "aws_instance" "cloudvault_agent" {
     Project     = "ai-csl-wazuh-lab"
     Role        = each.value.role
     Environment = var.environment
+  }
+}
+
+# --------------------------------------------------------------------------
+# Cloud-init user_data (MIME + gzip + base64)
+# --------------------------------------------------------------------------
+# AWS EC2 enforces a 16KB raw limit on user_data. Our agent script is ~20KB
+# with the inline CloudVault workloads. The `cloudinit_config` data source
+# builds a MIME multipart archive that cloud-init recognizes, then gzips and
+# base64-encodes it. Net wire format ≈ 4-5KB. Much headroom.
+
+data "cloudinit_config" "manager" {
+  gzip          = true
+  base64_encode = true
+
+  part {
+    content_type = "text/x-shellscript"
+    filename     = "wazuh_manager.sh"
+    content = templatefile("${path.module}/user_data/wazuh_manager.sh", {
+      wazuh_installer_series = var.wazuh_installer_series
+    })
+  }
+}
+
+data "cloudinit_config" "agent" {
+  for_each = local.cloudvault_agents
+
+  gzip          = true
+  base64_encode = true
+
+  part {
+    content_type = "text/x-shellscript"
+    filename     = "wazuh_agent.sh"
+    content = templatefile("${path.module}/user_data/wazuh_agent.sh", {
+      manager_ip    = aws_instance.wazuh_manager.private_ip
+      agent_name    = each.key
+      wazuh_version = var.wazuh_version
+    })
   }
 }

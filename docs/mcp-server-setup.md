@@ -221,17 +221,27 @@ With `TOKEN_LIFETIME_HOURS=720` your JWT is valid for 30 days. When it expires (
 - Query external threat intel (the `check_ioc_reputation` tool searches your own Wazuh history, not VirusTotal/AbuseIPDB)
 - Modify agent configuration or enroll new agents
 
-## Known upstream issue (v4.2.1)
+## Known upstream issue (v4.2.1) — active response rollback
 
-**`wazuh_firewall_allow` is broken.** The tool sends an empty `alert.data` structure to `firewall-drop.sh`, which errors with *"Cannot read 'srcip' from data"*. The iptables DROP rule stays in place.
+**`wazuh_firewall_allow` doesn't reliably remove the iptables rule.** Upstream's rollback path expects the Wazuh manager to time out the block based on ossec.conf's `<timeout>` value, not to receive an explicit delete command. When the MCP tool is called to unblock, the agent-side `firewall-drop` binary often adds a duplicate rule instead of removing the original.
 
-Workaround until patched: SSH to the agent and remove the rule manually:
+**Recommended workaround — use duration-based blocks:**
+
+Always call `wazuh_block_ip` with a `duration` parameter (seconds):
+
+```
+Block 192.0.2.99 on web-server-01 for 300 seconds.
+```
+
+After 300s, Wazuh's timeout mechanism removes the block automatically. This is also the production pattern — humans shouldn't be manually unblocking IPs; the SIEM's timeout + re-evaluation handles it.
+
+**If you need to unblock before the timeout expires,** SSH to the agent:
 
 ```bash
 ssh ubuntu@<agent-ip> 'sudo iptables -D INPUT -s <blocked-ip> -j DROP'
 ```
 
-Course Lesson 5 covers this explicitly so it's not a surprise. Upstream issue tracking in the AI-CSL team channel.
+Course Lesson 5 Part 2 teaches both patterns.
 
 ## Troubleshooting
 
@@ -259,3 +269,6 @@ Course Lesson 5 covers this explicitly so it's not a surprise. Upstream issue tr
 **"Tool execution error" in server log:**
 - Circuit breaker opens after 5 consecutive failures — wait 60s and retry.
 - Check `~/wazuh-mcp.log` for the specific Wazuh API error.
+
+**"No module named wazuh_mcp_server" when you try to start the server:**
+- The editable install didn't persist (happens after `--force-reinstall --no-deps` or venv reuse). From the Wazuh-MCP-Server directory with the venv active: `pip install -e .`. Then start the server again.

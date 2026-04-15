@@ -207,13 +207,16 @@ SVCEOF
     # Tell Wazuh to tail the custom API log — it parses as syslog format
     # (our Python logger emits "Apr 14 HH:MM:SS hostname cloudvault-api[PID]: LEVEL message").
     # This gets decoded by Wazuh's syslog decoder and the message is searchable via MCP.
-    sed -i '/<\/ossec_config>/i\
+    # Idempotent via marker comment.
+    if ! grep -q "AI-CSL:cloudvault-api-log" /var/ossec/etc/ossec.conf; then
+      sed -i '/<\/ossec_config>/i\
 \
-<!-- CloudVault API custom application log -->\
+<!-- AI-CSL:cloudvault-api-log -->\
 <localfile>\
   <log_format>syslog</log_format>\
   <location>/var/log/cloudvault-api.log</location>\
 </localfile>' /var/ossec/etc/ossec.conf
+    fi
     ;;
 
   "dev-server-01")
@@ -286,20 +289,23 @@ FEESEOF
 # sshd/sudo/PAM write. We add it explicitly as a logcollector block.
 #
 # Must use sed to insert BEFORE </ossec_config> — appending produces invalid XML.
-sed -i '/<\/ossec_config>/i\
+# Idempotent: marker comment prevents duplicate insertion if user_data re-runs.
+if ! grep -q "AI-CSL:cloudvault-fim" /var/ossec/etc/ossec.conf; then
+  sed -i '/<\/ossec_config>/i\
 \
-<!-- CloudVault Financial - Custom FIM monitoring -->\
+<!-- AI-CSL:cloudvault-fim -->\
 <syscheck>\
   <directories check_all="yes" realtime="yes" report_changes="yes">/opt/cloudvault/client-data</directories>\
   <directories check_all="yes" realtime="yes" report_changes="yes">/opt/cloudvault/financial-records</directories>\
   <directories check_all="yes" realtime="yes">/opt/cloudvault/config</directories>\
 </syscheck>\
 \
-<!-- Explicit auth.log tail (more reliable than the default journald reader) -->\
+<!-- AI-CSL:authlog-tail -->\
 <localfile>\
   <log_format>syslog</log_format>\
   <location>/var/log/auth.log</location>\
 </localfile>' /var/ossec/etc/ossec.conf
+fi
 
 # --- Install the event generation script INLINE (no external URL dependency) ---
 cat > /home/ubuntu/generate-events.sh << 'GENEVENTSEOF'
@@ -336,20 +342,39 @@ read -p "Press Enter to start scenario 1, or Ctrl+C to cancel..."
 # --- Scenario 1: SSH brute force (MITRE T1110.001) ---
 echo ""
 echo "--- [1/4] SSH brute force ---"
-echo "What this does: generates 15 failed SSH login attempts against localhost."
-echo "How Wazuh detects it: sshd writes each failure to /var/log/auth.log."
-echo "Wazuh's decoder parses those lines and fires rule 5710 (invalid user)"
-echo "or 5712 (valid user, wrong password). Many failures in a short window"
-echo "can also trigger composite rules like 5720 (multiple auth failures)."
+echo "What this does: generates 15 failed SSH login attempts from this agent"
+echo "AGAINST web-server-01 (10.0.1.12). The source IP for each attempt will"
+echo "be this agent's private IP (10.0.1.x), NOT 127.0.0.1."
+echo ""
+echo "How Wazuh detects it: sshd on web-server-01 writes each failure to"
+echo "/var/log/auth.log. Wazuh fires rule 5710 (invalid user), then after"
+echo "~8 rapid failures the composite rule 5712 (brute force detected)."
+echo "Because the source IP is NOT in Wazuh's default AR whitelist (which"
+echo "includes 127.0.0.1), the configured active-response trigger on rule"
+echo "5712 will fire — web-server-01 will auto-add an iptables DROP for"
+echo "this agent's IP for 300 seconds."
 echo ""
 
+# Always target web-server-01 by its stable private IP. If we ARE web-server-01
+# (unlikely — attack sim is meant for dev-server-01) we'd fall back to localhost.
+TARGET_IP="10.0.1.12"
+MY_IP=$(hostname -I | awk '{print $1}')
+if [ "$MY_IP" = "$TARGET_IP" ]; then
+  TARGET_IP="127.0.0.1"
+  echo "(running on web-server-01 itself, falling back to localhost)"
+fi
+
 for i in $(seq 1 15); do
-  sshpass -p "wrongpass$i" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=2 \
-    "fakeuser$i@localhost" exit 2>/dev/null || true
-  echo "  Attempt $i/15 (failed login as fakeuser$i)"
+  sshpass -p "wrongpass$i" ssh -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null -o ConnectTimeout=2 \
+    -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+    "fakeuser$i@$TARGET_IP" exit 2>/dev/null || true
+  echo "  Attempt $i/15 (source=$MY_IP dst=$TARGET_IP user=fakeuser$i)"
   sleep 0.5
 done
-echo "[DONE] 15 failed SSH attempts generated."
+echo "[DONE] 15 failed SSH attempts sent from $MY_IP → $TARGET_IP"
+echo ""
+echo "After detection, check iptables on web-server-01 (expect DROP for $MY_IP)."
 
 # --- Scenario 2: Unauthorized data access (MITRE T1565.001) ---
 echo ""
@@ -377,33 +402,37 @@ fi
 
 echo "[DONE] Client data and financial records modified."
 
-# --- Scenario 3: Privilege escalation (MITRE T1548) ---
+# --- Scenario 3: Account creation + privilege escalation (MITRE T1136 + T1548.003) ---
 echo ""
-echo "--- [3/4] Privilege escalation attempts ---"
-echo "What this does: creates a user (contractor-test) who is NOT in the"
-echo "sudoers file, then has that user attempt sudo. Each attempt is"
-echo "rejected and logged as a clear privilege-escalation failure."
+echo "--- [3/4] Account creation + privilege escalation ---"
+echo "What this does: creates a new local user (contractor-test) and then"
+echo "uses sudo to run privileged commands AS that new user. This is a"
+echo "classic persistence + escalation pattern — attackers create an account"
+echo "that'll survive reboots, then escalate through it."
 echo ""
-echo "How Wazuh detects it: sudo writes 'user NOT in sudoers' to"
-echo "/var/log/auth.log. The log collector (explicit <localfile> on"
-echo "auth.log) forwards each event to the manager. Rule 5401 fires on"
-echo "'user NOT in sudoers' — a clean, specific privilege-escalation"
-echo "signal with no false positives."
+echo "How Wazuh detects it (4 rules, reliably):"
+echo "  - Rule 5901 (new group added) — level 8, MITRE T1136"
+echo "  - Rule 5902 (new user added)  — level 8, MITRE T1136"
+echo "  - Rule 5403 (first-time sudo) — level 4, MITRE T1548.003"
+echo "  - Rule 5402 (successful sudo to ROOT, fires multiple times)"
+echo "    — level 3, MITRE T1548.003"
 echo ""
 
 sudo useradd -m -s /bin/bash contractor-test 2>/dev/null || true
-echo "  Created user: contractor-test (NOT granted sudo)"
+echo "  Created user: contractor-test (intentional persistence artifact)"
 
 for i in $(seq 1 5); do
-  # Run sudo AS contractor-test. Because they aren't in sudoers, sudo writes
-  # 'user NOT in sudoers' to auth.log — the pattern rule 5401 matches cleanly.
-  # `-n` makes sudo non-interactive so it doesn't hang waiting for a password.
-  sudo -u contractor-test sudo -n /usr/bin/cat /etc/shadow 2>/dev/null || true
-  echo "  Attempt $i/5: contractor-test tried sudo cat /etc/shadow — REJECTED"
+  # Each sudo invocation becomes contractor-test, then runs a privileged read.
+  # Fires 5403 on first iteration, 5402 on all 5. Produces a clean timeline of
+  # "new account used for privileged operations" — the signal students should
+  # learn to recognize.
+  sudo -u contractor-test sudo -n /usr/bin/id 2>/dev/null || \
+    sudo -u contractor-test /usr/bin/id
+  echo "  Action $i/5: ran 'id' as contractor-test (captured by sudo audit)"
   sleep 1
 done
 
-echo "[DONE] 5 failed sudo attempts by contractor-test — expect 5x rule 5401."
+echo "[DONE] 4 distinct rule IDs should fire: 5901, 5902, 5403, 5402 (5x)."
 
 # --- Scenario 4: Persistence via hidden files (MITRE T1564.001) ---
 echo ""

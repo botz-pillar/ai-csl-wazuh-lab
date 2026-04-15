@@ -99,16 +99,23 @@ fi
 # Timeout 300s = auto-rollback after 5 minutes so the lab doesn't accumulate
 # iptables rules. For a production deploy, students learn to raise/remove
 # the timeout deliberately.
-echo "=== Adding automatic active-response triggers ==="
-sed -i '/<\/ossec_config>/i\
+# Make the config modification idempotent — if the user_data script re-runs
+# for any reason (cloud-init re-execution, manual rerun during debugging),
+# we don't want DUPLICATE <active-response> blocks piling up.
+if ! grep -q "AI-CSL:auto-AR" /var/ossec/etc/ossec.conf; then
+  echo "=== Adding automatic active-response triggers ==="
+  sed -i '/<\/ossec_config>/i\
 \
-<!-- Automatic active-response triggers (AI-CSL lab) -->\
+<!-- AI-CSL:auto-AR -->\
 <active-response>\
   <command>firewall-drop</command>\
   <location>local</location>\
   <rules_id>5712,5720</rules_id>\
   <timeout>300</timeout>\
 </active-response>' /var/ossec/etc/ossec.conf
+else
+  echo "=== AI-CSL auto-AR block already present, skipping ==="
+fi
 
 systemctl restart wazuh-manager
 

@@ -1,44 +1,28 @@
 # Connecting Wazuh to Claude Code via MCP
 
-For the full setup guide see [`docs/mcp-server-setup.md`](../docs/mcp-server-setup.md) — this directory is for supplementary files.
+For the full setup guide see [`docs/mcp-server-setup.md`](../docs/mcp-server-setup.md) — this directory was used for supplementary files (previously housed a firewall_allow patch that v3 no longer needs).
 
-## What's here
+## Active response pattern
 
-- `firewall-allow-fix.patch` — AI-CSL patch fixing the upstream `wazuh_firewall_allow` bug in v4.2.1 (missing `alert.data.srcip` causes iptables rollback to fail)
+The course teaches duration-based blocks, not manual unblocks:
 
-## Applying the firewall_allow patch
-
-After cloning the Wazuh MCP server, apply the patch before starting it:
-
-```bash
-cd ~/projects/Wazuh-MCP-Server
-git apply /path/to/ai-csl-wazuh-lab/mcp/firewall-allow-fix.patch
+```
+Block 192.0.2.99 on web-server-01 for 300 seconds.
 ```
 
-Then reinstall (editable mode picks up the change automatically if you're using `pip install -e .`):
+`wazuh_block_ip` takes a `duration` (seconds). After the duration expires, Wazuh's internal timeout logic removes the iptables rule. This matches how production SOCs actually operate — automatic timeouts prevent orphaned blocks.
+
+**If you need to unblock early,** SSH to the agent:
 
 ```bash
-source .venv/bin/activate
-pip install -e . --force-reinstall --no-deps
+ssh ubuntu@<agent-ip> 'sudo iptables -D INPUT -s <blocked-ip> -j DROP'
 ```
 
-Verify the patch applied:
+The upstream MCP `wazuh_firewall_allow` tool has a known bug where it adds a duplicate DROP rule instead of removing the original — see `docs/mcp-server-setup.md` for details.
 
-```bash
-grep -A2 "alert.*srcip" src/wazuh_mcp_server/api/wazuh_client.py | head -10
-```
+## Direct Wazuh API access (no-MCP fallback)
 
-You should see `"alert": {"data": {"srcip": src_ip}}` in BOTH `firewall_allow` and `host_allow` methods.
-
-## Why the patch is needed
-
-Upstream v4.2.1's `firewall_allow` tool sends an empty `alert.data` structure to the agent's `firewall-drop.sh`. That script reads `srcip` from `alert.data.srcip` to know which IP to unblock. With the field missing, it logs `"Cannot read 'srcip' from data"` and leaves the iptables DROP rule in place. Our patch mirrors the `block_ip` tool's data structure so rollback works.
-
-Upstream PR status: **filed** (link once merged, remove this patch).
-
-## Direct Wazuh API access (no MCP fallback)
-
-If you can't get the MCP server running, you can still query Wazuh's API directly:
+If the MCP server isn't available, query the Wazuh API directly:
 
 ```bash
 # Get an auth token
@@ -55,4 +39,4 @@ curl -s -k -u "admin:YOUR_ADMIN_PASSWORD" \
   "https://YOUR_MANAGER_IP:9200/wazuh-alerts-*/_count" | python3 -m json.tool
 ```
 
-Copy output to Claude for analysis.
+Paste the JSON output to Claude for analysis.
