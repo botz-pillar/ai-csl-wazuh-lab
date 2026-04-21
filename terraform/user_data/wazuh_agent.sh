@@ -204,19 +204,17 @@ SVCEOF
     systemctl enable cloudvault-api
     systemctl start cloudvault-api
 
-    # Tell Wazuh to tail the custom API log — it parses as syslog format
+    # Tell Wazuh to tail the custom API log — syslog format
     # (our Python logger emits "Apr 14 HH:MM:SS hostname cloudvault-api[PID]: LEVEL message").
-    # This gets decoded by Wazuh's syslog decoder and the message is searchable via MCP.
-    # Idempotent via marker comment.
-    if ! grep -q "AI-CSL:cloudvault-api-log" /var/ossec/etc/ossec.conf; then
-      sed -i '/<\/ossec_config>/i\
-\
-<!-- AI-CSL:cloudvault-api-log -->\
+    # Same delete-then-insert idempotency strategy as the main AI-CSL ossec.conf block.
+    sed -i '/<!-- AI-CSL:cloudvault-api-log -->/,/<!-- AI-CSL:cloudvault-api-log-end -->/d' /var/ossec/etc/ossec.conf
+    sed -i '0,/<\/ossec_config>/{s|<\/ossec_config>|<!-- AI-CSL:cloudvault-api-log -->\
 <localfile>\
   <log_format>syslog</log_format>\
   <location>/var/log/cloudvault-api.log</location>\
-</localfile>' /var/ossec/etc/ossec.conf
-    fi
+</localfile>\
+<!-- AI-CSL:cloudvault-api-log-end -->\
+</ossec_config>|}' /var/ossec/etc/ossec.conf
     ;;
 
   "dev-server-01")
@@ -288,210 +286,46 @@ FEESEOF
 # is the textbook Linux auth-monitoring target — stable, catches everything
 # sshd/sudo/PAM write. We add it explicitly as a logcollector block.
 #
-# Must use sed to insert BEFORE </ossec_config> — appending produces invalid XML.
-# Idempotent: marker comment prevents duplicate insertion if user_data re-runs.
-if ! grep -q "AI-CSL:cloudvault-fim" /var/ossec/etc/ossec.conf; then
-  sed -i '/<\/ossec_config>/i\
-\
-<!-- AI-CSL:cloudvault-fim -->\
+# Idempotency strategy: DELETE any previous AI-CSL blocks FIRST, then insert
+# fresh. Using a guard like `grep -q marker` isn't sufficient — in v3 testing
+# we found duplicate blocks in the deployed ossec.conf, possibly from cloud-init
+# re-runs or from Wazuh's install writing its own ossec_config. Delete-then-insert
+# works regardless of how many times user_data executes.
+
+# Delete any existing AI-CSL blocks (all of them, if there are duplicates).
+# The pattern range covers marker → closing </localfile> of the authlog section.
+sed -i '/<!-- AI-CSL:cloudvault-fim -->/,/AI-CSL:authlog-tail-end/d' /var/ossec/etc/ossec.conf
+
+# Insert a fresh block BEFORE the first </ossec_config>. The end-marker comment
+# makes the range delete above unambiguous on future re-runs.
+sed -i '0,/<\/ossec_config>/{s|<\/ossec_config>|<!-- AI-CSL:cloudvault-fim -->\
 <syscheck>\
   <directories check_all="yes" realtime="yes" report_changes="yes">/opt/cloudvault/client-data</directories>\
   <directories check_all="yes" realtime="yes" report_changes="yes">/opt/cloudvault/financial-records</directories>\
   <directories check_all="yes" realtime="yes">/opt/cloudvault/config</directories>\
 </syscheck>\
-\
-<!-- AI-CSL:authlog-tail -->\
 <localfile>\
   <log_format>syslog</log_format>\
   <location>/var/log/auth.log</location>\
-</localfile>' /var/ossec/etc/ossec.conf
+</localfile>\
+<!-- AI-CSL:authlog-tail-end -->\
+</ossec_config>|}' /var/ossec/etc/ossec.conf
+
+# Sanity check: verify exactly one AI-CSL block exists. Fail loud if not.
+AICSL_COUNT=$(grep -c "AI-CSL:cloudvault-fim" /var/ossec/etc/ossec.conf || true)
+if [ "$AICSL_COUNT" != "1" ]; then
+  echo "=== ERROR: expected 1 AI-CSL block in ossec.conf, found $AICSL_COUNT ==="
+  echo "=== ossec.conf state at failure ==="
+  cat /var/ossec/etc/ossec.conf | grep -n "AI-CSL\|<ossec_config\|</ossec_config"
+  exit 1
 fi
+echo "=== AI-CSL ossec.conf block installed (count=1) ==="
 
-# --- Install the event generation script INLINE (no external URL dependency) ---
-cat > /home/ubuntu/generate-events.sh << 'GENEVENTSEOF'
-#!/bin/bash
-# CloudVault Financial - Wazuh Lab Event Generator
-#
-# SAFETY: This script only targets the local machine. It does NOT reach
-# external systems. All artifacts are cleaned up after detection. Only run
-# on your own lab instances.
-#
-# The script runs four short attack scenarios, each tied to a MITRE ATT&CK
-# technique. Each produces Wazuh alerts you can investigate.
-
-set -uo pipefail
-
-cat << 'BANNER'
-============================================
-  CloudVault Wazuh Lab - Attack Simulations
-============================================
-
-This will run 4 scenarios against this instance:
-
-  1. SSH brute force                             (MITRE T1110.001)
-  2. Unauthorized data access on client records  (MITRE T1565.001)
-  3. Privilege escalation attempts               (MITRE T1548)
-  4. Persistence via hidden files                (MITRE T1564.001)
-
-Each scenario produces alerts Wazuh ingests within ~60 seconds.
-BANNER
-
-echo ""
-read -p "Press Enter to start scenario 1, or Ctrl+C to cancel..."
-
-# --- Scenario 1: SSH brute force (MITRE T1110.001) ---
-echo ""
-echo "--- [1/4] SSH brute force ---"
-echo "What this does: generates 15 failed SSH login attempts from this agent"
-echo "AGAINST web-server-01 (10.0.1.12). The source IP for each attempt will"
-echo "be this agent's private IP (10.0.1.x), NOT 127.0.0.1."
-echo ""
-echo "How Wazuh detects it: sshd on web-server-01 writes each failure to"
-echo "/var/log/auth.log. Wazuh fires rule 5710 (invalid user), then after"
-echo "~8 rapid failures the composite rule 5712 (brute force detected)."
-echo "Because the source IP is NOT in Wazuh's default AR whitelist (which"
-echo "includes 127.0.0.1), the configured active-response trigger on rule"
-echo "5712 will fire — web-server-01 will auto-add an iptables DROP for"
-echo "this agent's IP for 300 seconds."
-echo ""
-
-# Always target web-server-01 by its stable private IP. If we ARE web-server-01
-# (unlikely — attack sim is meant for dev-server-01) we'd fall back to localhost.
-TARGET_IP="10.0.1.12"
-MY_IP=$(hostname -I | awk '{print $1}')
-if [ "$MY_IP" = "$TARGET_IP" ]; then
-  TARGET_IP="127.0.0.1"
-  echo "(running on web-server-01 itself, falling back to localhost)"
-fi
-
-for i in $(seq 1 15); do
-  sshpass -p "wrongpass$i" ssh -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null -o ConnectTimeout=2 \
-    -o PreferredAuthentications=password -o PubkeyAuthentication=no \
-    "fakeuser$i@$TARGET_IP" exit 2>/dev/null || true
-  echo "  Attempt $i/15 (source=$MY_IP dst=$TARGET_IP user=fakeuser$i)"
-  sleep 0.5
-done
-echo "[DONE] 15 failed SSH attempts sent from $MY_IP → $TARGET_IP"
-echo ""
-echo "After detection, check iptables on web-server-01 (expect DROP for $MY_IP)."
-
-# --- Scenario 2: Unauthorized data access (MITRE T1565.001) ---
-echo ""
-echo "--- [2/4] Unauthorized data access ---"
-echo "What this does: modifies files in CloudVault's client-data and"
-echo "financial-records directories."
-echo "How Wazuh detects it: FIM (File Integrity Monitoring) is configured"
-echo "in realtime mode on these paths. Any add/modify/delete triggers rule"
-echo "550 (integrity checksum changed) or 554 (new file added)."
-echo ""
-sleep 2
-
-if [ -d /opt/cloudvault/client-data ]; then
-  echo "MODIFIED: client records accessed at $(date -u)" >> /opt/cloudvault/client-data/client-index.csv
-  echo "Sensitive export - Peterson Trust Q1 2026" > /opt/cloudvault/client-data/peterson-trust-export.csv
-  echo "CV-001,Peterson Trust,4500000,moderate,MODIFIED" >> /opt/cloudvault/client-data/peterson-trust-export.csv
-  echo "  Modified /opt/cloudvault/client-data/client-index.csv"
-  echo "  Created /opt/cloudvault/client-data/peterson-trust-export.csv"
-fi
-
-if [ -d /opt/cloudvault/financial-records ]; then
-  echo "CV-001,Q1-2026,99999,99999,UNAUTHORIZED_CHANGE" >> /opt/cloudvault/financial-records/q1-2026-fees.csv
-  echo "  Modified /opt/cloudvault/financial-records/q1-2026-fees.csv"
-fi
-
-echo "[DONE] Client data and financial records modified."
-
-# --- Scenario 3: Account creation + privilege escalation (MITRE T1136 + T1548.003) ---
-echo ""
-echo "--- [3/4] Account creation + privilege escalation ---"
-echo "What this does: creates a new local user (contractor-test) and then"
-echo "uses sudo to run privileged commands AS that new user. This is a"
-echo "classic persistence + escalation pattern — attackers create an account"
-echo "that'll survive reboots, then escalate through it."
-echo ""
-echo "How Wazuh detects it (4 rules, reliably):"
-echo "  - Rule 5901 (new group added) — level 8, MITRE T1136"
-echo "  - Rule 5902 (new user added)  — level 8, MITRE T1136"
-echo "  - Rule 5403 (first-time sudo) — level 4, MITRE T1548.003"
-echo "  - Rule 5402 (successful sudo to ROOT, fires multiple times)"
-echo "    — level 3, MITRE T1548.003"
-echo ""
-
-sudo useradd -m -s /bin/bash contractor-test 2>/dev/null || true
-echo "  Created user: contractor-test (intentional persistence artifact)"
-
-for i in $(seq 1 5); do
-  # Each sudo invocation becomes contractor-test, then runs a privileged read.
-  # Fires 5403 on first iteration, 5402 on all 5. Produces a clean timeline of
-  # "new account used for privileged operations" — the signal students should
-  # learn to recognize.
-  sudo -u contractor-test sudo -n /usr/bin/id 2>/dev/null || \
-    sudo -u contractor-test /usr/bin/id
-  echo "  Action $i/5: ran 'id' as contractor-test (captured by sudo audit)"
-  sleep 1
-done
-
-echo "[DONE] 4 distinct rule IDs should fire: 5901, 5902, 5403, 5402 (5x)."
-
-# --- Scenario 4: Persistence via hidden files (MITRE T1564.001) ---
-echo ""
-echo "--- [4/4] Persistence artifacts ---"
-echo "What this does: creates hidden files in locations attackers commonly use"
-echo "for persistence (/tmp, /dev/shm, /usr/share with dot-prefixed names)."
-echo "How Wazuh detects it: rootcheck + FIM. Rootcheck scans periodically for"
-echo "hidden files matching known attacker TTPs (rule 510). FIM on /etc, /bin,"
-echo "/usr/bin flags additions."
-echo ""
-
-sudo mkdir -p "/usr/share/...hidden-staging" 2>/dev/null || true
-sudo touch "/usr/share/...hidden-staging/payload.bin"
-sudo touch "/tmp/.cloudvault-backdoor"
-sudo touch "/dev/shm/.persistence-marker"
-
-echo "  Created hidden directory: /usr/share/...hidden-staging/"
-echo "  Created hidden file: /tmp/.cloudvault-backdoor"
-echo "  Created hidden file: /dev/shm/.persistence-marker"
-echo "[DONE] Persistence artifacts created."
-
-# --- Cleanup after detection window ---
-#
-# We clean up SOME artifacts (hidden files in /tmp, /dev/shm, /usr/share) so
-# the script can be re-run cleanly. But we DELIBERATELY leave contractor-test
-# on the box — it becomes a threat-hunting artifact for Lesson 4 ("find IAM-style
-# accounts that shouldn't be here"). Remove it in the cleanup lesson at the end.
-echo ""
-echo "Waiting 60 seconds for Wazuh to detect and alert on all events..."
-sleep 60
-
-echo ""
-echo "Cleaning up transient artifacts (leaving contractor-test user in place for threat hunt)..."
-sudo rm -rf "/usr/share/...hidden-staging" 2>/dev/null || true
-sudo rm -f "/tmp/.cloudvault-backdoor" 2>/dev/null || true
-sudo rm -f "/dev/shm/.persistence-marker" 2>/dev/null || true
-# NOTE: contractor-test user is INTENTIONALLY not deleted here — used by L4 Hunt 4
-
-cat << 'DONE'
-
-============================================
-  All 4 scenarios complete.
-============================================
-
-Check your Wazuh dashboard or ask Claude Code via MCP:
-
-  "Show me all alerts from the last 10 minutes on this agent,
-   grouped by MITRE technique."
-
-What you should see:
-  - Multiple rule 5710/5712/5720 alerts (SSH brute force)
-  - FIM alerts (rule 550/554) on /opt/cloudvault files
-  - Rule 5401/5402 alerts (sudo failures)
-  - Rootcheck/FIM alerts on hidden file creation
-
-Allow 1-2 minutes for all events to reach the indexer.
-
-DONE
-GENEVENTSEOF
+# --- Install the event generation script via base64 decode ---
+# The script is staged from scripts/agent-events-generator.sh in the repo, passed
+# in as a templated base64 variable. This avoids the heredoc parsing fragility
+# we hit in v3 where nested heredocs / transit encoding mangled the inline content.
+echo "${events_generator_b64}" | base64 -d > /home/ubuntu/generate-events.sh
 
 chmod +x /home/ubuntu/generate-events.sh
 chown ubuntu:ubuntu /home/ubuntu/generate-events.sh

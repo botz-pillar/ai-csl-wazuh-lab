@@ -375,6 +375,10 @@ data "cloudinit_config" "agent" {
       manager_ip    = aws_instance.wazuh_manager.private_ip
       agent_name    = each.key
       wazuh_version = var.wazuh_version
+      # Stage the events generator as base64 so the cloud-init script can decode
+      # it atomically. Avoids the inline-heredoc fragility that caused v3's
+      # deployed script to diverge from the repo source.
+      events_generator_b64 = base64encode(file("${path.module}/../scripts/agent-events-generator.sh"))
     })
   }
 }

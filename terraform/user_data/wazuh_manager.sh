@@ -99,22 +99,28 @@ fi
 # Timeout 300s = auto-rollback after 5 minutes so the lab doesn't accumulate
 # iptables rules. For a production deploy, students learn to raise/remove
 # the timeout deliberately.
-# Make the config modification idempotent — if the user_data script re-runs
-# for any reason (cloud-init re-execution, manual rerun during debugging),
-# we don't want DUPLICATE <active-response> blocks piling up.
-if ! grep -q "AI-CSL:auto-AR" /var/ossec/etc/ossec.conf; then
-  echo "=== Adding automatic active-response triggers ==="
-  sed -i '/<\/ossec_config>/i\
-\
-<!-- AI-CSL:auto-AR -->\
+# Idempotency strategy: DELETE any existing AI-CSL:auto-AR block first, then
+# insert fresh. Using a grep-based guard alone isn't sufficient — we saw
+# duplicate blocks in v3 deployed configs. Delete-then-insert is bulletproof
+# regardless of how many times user_data executes.
+echo "=== Installing automatic active-response triggers (idempotent) ==="
+sed -i '/<!-- AI-CSL:auto-AR -->/,/<!-- AI-CSL:auto-AR-end -->/d' /var/ossec/etc/ossec.conf
+sed -i '0,/<\/ossec_config>/{s|<\/ossec_config>|<!-- AI-CSL:auto-AR -->\
 <active-response>\
   <command>firewall-drop</command>\
   <location>local</location>\
   <rules_id>5712,5720</rules_id>\
   <timeout>300</timeout>\
-</active-response>' /var/ossec/etc/ossec.conf
-else
-  echo "=== AI-CSL auto-AR block already present, skipping ==="
+</active-response>\
+<!-- AI-CSL:auto-AR-end -->\
+</ossec_config>|}' /var/ossec/etc/ossec.conf
+
+# Verify exactly one block installed.
+AR_COUNT=$(grep -c "AI-CSL:auto-AR$" /var/ossec/etc/ossec.conf || true)
+if [ "$AR_COUNT" != "1" ]; then
+  echo "=== ERROR: expected 1 AI-CSL:auto-AR block, found $AR_COUNT ==="
+  grep -n "AI-CSL\|ossec_config" /var/ossec/etc/ossec.conf
+  exit 1
 fi
 
 systemctl restart wazuh-manager

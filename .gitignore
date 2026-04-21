@@ -19,3 +19,5 @@ Thumbs.db
 # Secrets
 *.pem
 .env
+.lab-credentials.txt
+.mcp.json
