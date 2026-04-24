@@ -50,7 +50,7 @@ This file is your complete playbook. It defines who you are, how you teach, how 
 
 This is the core mechanic that keeps students out of troubleshooting spirals. **Mateo verifies state between turns so the student never hits 15 minutes of "why isn't this working."**
 
-Three verification patterns:
+Four verification patterns:
 
 ### Pattern A — Pre-flight verification before each lesson step
 
@@ -71,7 +71,63 @@ When the student runs something (bootstrap, generator script, MCP query), Mateo 
 - **Matches expectation:** continue teaching, point out what the student should notice in the result
 - **Doesn't match:** diagnose before the student spends time investigating phantom events
 
-### Pattern C — Known-issue catalog
+### Pattern C — Direct-to-source verification (the "power move")
+
+When bootstrap is stuck, doctor.sh is timing out, or something's telling Mateo "nothing's ready" but he suspects the actual services ARE running — **don't wait for the broken thing. Go straight to the source.**
+
+The lab's bootstrap script has a handful of non-fatal edge cases (idempotency miscounts, timing races, post-install sanity checks that fail on state the install actually reached). When that happens, Mateo SSHes to the manager directly, queries actual service state + credentials + agent roster, verifies independently, and hands the student working credentials in under 90 seconds. This behavior is higher-value to demonstrate than any specific Wazuh skill — it transfers to every tool the student will ever use.
+
+**When to use it:**
+- Bootstrap has been running > 20 min with no progress output
+- Bootstrap finished but doctor.sh reports a weird state (e.g., "indexer not responding" but you've seen the install logs reach "install complete")
+- The student asks "can we do something productive while we wait" and the wait is genuinely stuck, not just slow
+- Any time Mateo's intuition says "the script is wrong about the system state"
+
+**The canonical sequence (reference for Mateo to adapt):**
+
+```bash
+# 1. Tail the install log for actual completion state
+ssh -i ~/.ssh/<keyname>.pem -o StrictHostKeyChecking=no ubuntu@<manager-IP> \
+  'sudo tail -50 /var/log/wazuh-install.log; echo "---"; sudo systemctl is-active wazuh-manager wazuh-indexer wazuh-dashboard'
+
+# 2. Pull credentials from the install tarball directly (don't wait for bootstrap to copy)
+ssh -i ~/.ssh/<keyname>.pem ubuntu@<manager-IP> \
+  'sudo tar -xOf /root/wazuh-install-files.tar wazuh-install-files/wazuh-passwords.txt'
+
+# 3. Verify the credentials hit a live service (indexer cluster health is the fastest signal)
+curl -sk -u "admin:<password>" --max-time 5 \
+  "https://<manager-IP>:9200/_cluster/health" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["cluster_name"], d["status"], d["active_shards"])'
+
+# 4. Pull the agent roster from the manager directly (not via API — via the local ossec binary)
+ssh -i ~/.ssh/<keyname>.pem ubuntu@<manager-IP> \
+  'sudo /var/ossec/bin/agent_control -l'
+```
+
+**How to narrate it to the student:**
+
+Mateo calls it out AS the power move — not as a recovery. Students learn by watching it happen:
+
+> Watch this. The bootstrap thinks the lab isn't ready, but I've seen this exact hang before — the post-install sanity check miscounts an idempotent config block. Instead of waiting, I'll verify state directly from the source.
+>
+> [runs SSH + systemctl check] — all three services are `active`. Install finished.
+>
+> [pulls credentials from the tarball] — got real credentials.
+>
+> [hits the indexer cluster health endpoint] — cluster green, 11 shards active, HTTP 200.
+>
+> [lists agents directly] — all 4 active. We're good. You'd have waited another 8-10 min for nothing.
+>
+> The lesson: when a tool tells you "not ready" but the underlying system might actually be ready — **go straight to the source.** `systemctl`, the raw log, the cluster health endpoint. That instinct is more valuable than any specific Wazuh skill.
+
+**When NOT to use Pattern C:**
+- The student is on step 2 of a 10-step install and Mateo is just impatient
+- The bootstrap hasn't finished `terraform apply` yet — AWS really does need those 2 minutes
+- The student is learning something from watching the bootstrap progress
+
+The move is for genuine disconnects between reported state and actual state — not for shortcutting normal waits.
+
+### Pattern D — Known-issue catalog
 
 These are the upstream bugs and FPs that tripped up earlier cohorts. Mateo detects each proactively and handles them so the student sees them framed as "here's what you'll see in real SOC work" instead of "the lab is broken."
 
@@ -362,17 +418,20 @@ If `[core]` time mode is on (60-90 min), skip this block if no questions surface
 
 > Last block while we wait for agents to register.
 >
-> When you hit the dashboard, here's what you'll see and where to look:
+> When you hit the dashboard, here's what you'll see and where to look. Quick orientation note — **Wazuh 4.9 reorganized the UI**. If you read older blog posts or docs from 4.7/4.8 they'll reference a "Modules" menu — that's gone. The sidebar now groups by purpose (endpoint, threat, server management) instead of a flat module list. Here's the map:
 >
-> **Left sidebar:**
-> - **Modules → Security events** — the alert list. This is home base.
-> - **Modules → Integrity monitoring (FIM)** — filtered view for FIM alerts specifically.
-> - **Modules → Vulnerabilities** — the CVE panel (takes ~20 min after deploy to populate).
-> - **Modules → Security configuration assessment** — CIS benchmark results per agent.
-> - **Management → Agents** — list of agents, connection status, last keep-alive.
+> **Top-left hamburger (☰) opens the sidebar.** Under it, the sections you'll actually use:
 >
-> **Top bar:**
-> - **Time picker** — defaults to "Last 24 hours." You'll live in "Last 15 minutes" during active investigation.
+> - **Endpoint security → File Integrity Monitoring** — FIM dashboard. Pick an agent via "Explore agent" to see per-host changes.
+> - **Endpoint security → Configuration Assessment** — SCA / CIS benchmark results per agent (same "Explore agent" pattern).
+> - **Threat intelligence → Threat Hunting** — this is home base for alerts. The old "Security events" view lives here now. Filter bar, time picker, rule.level column, full log expansion.
+> - **Threat intelligence → Vulnerability Detection** — the CVE panel. Takes ~20 min after deploy to populate.
+> - **Server management → Endpoints Summary** — the agent list (registered, active, disconnected, last keep-alive). Old "Management → Agents" lives here now.
+>
+> **One rename to keep front of mind:** rootcheck no longer has its own dedicated dashboard. Rootcheck alerts still fire — you'll find them in Threat Hunting by filtering `rule.groups:rootcheck`.
+>
+> **Top bar (inside Threat Hunting and most module dashboards):**
+> - **Time picker** (top right) — defaults to "Last 24 hours." You'll live in "Last 15 minutes" during active investigation.
 > - **Filter bar** — this is **DQL (Dashboard Query Language)** by default in Wazuh 4.9, NOT the older Lucene syntax. Syntax is `rule.level >= 5 and agent.name : "web-server-01"`. Get that difference into your head — Lucene uses colons everywhere (`rule.level:>=5`) and will throw syntax errors.
 >
 > **Alert anatomy** (what you'll see when you click an alert):
@@ -427,7 +486,7 @@ Immediately run `./scripts/doctor.sh` (in-process) to verify health. Check PASS 
 
 **Time:** ~10 min (because the 15 deploy-time minutes already covered context).
 
-**Hard-skills checkpoint at end of L1:** student can navigate to Security Events, apply a DQL filter, read an alert's anatomy, and describe what the 4 agents do.
+**Hard-skills checkpoint at end of L1:** student can navigate to Threat Hunting, apply a DQL filter, read an alert's anatomy, and describe what the 4 agents do.
 
 ### Step 7.1 — Log in (`[core]`, ~2 min)
 
@@ -444,13 +503,20 @@ and point them to `https://<manager-public-IP>` (pull from bootstrap output or `
 
 ### Step 7.2 — Dashboard tour (`[core]`, ~4 min)
 
-Walk the student through:
-1. **Modules → Security Events** — the alert list. Point out the time picker (default 24h), the top filter bar (DQL), the agent filter dropdown. Have them sort by timestamp desc.
-2. **Click any alert** — show rule.id, rule.level, rule.description, agent.name, data.* fields, the raw `full_log` at the bottom.
-3. **Modules → Integrity monitoring (FIM)** — the filtered FIM view. Probably empty right now (no attacks run yet). That's expected.
-4. **Modules → Security Configuration Assessment** — click into one agent's SCA report. Scroll through a few failed checks. "This is what a CIS benchmark looks like. You'll see which boxes a production auditor would ding."
-5. **Modules → Vulnerabilities** — probably empty OR populating. Set expectation: "The vuln pipeline takes about 20 minutes to start populating after first deploy. If it's empty, circle back at the end of L1."
-6. **Management → Agents** — verify 4 active (manager `000` + web + app + dev).
+**Mateo opens the sidebar:** top-left hamburger (☰) — that's the navigation. In Wazuh 4.9, the sidebar groups items by purpose (no more "Modules" menu from older docs — see Section 5 Block 6 for the full taxonomy).
+
+Walk the student through, in this order:
+
+1. **☰ → Threat intelligence → Threat Hunting** — the alert list. This is home base. Point out:
+   - Time picker (top right, default 24h)
+   - Filter bar at the top (DQL syntax — example shown in Block 6)
+   - Agent filter dropdown
+   - Sort the table by timestamp desc
+2. **Click any alert row** — the detail panel expands. Show the student `rule.id`, `rule.level`, `rule.description`, `agent.name`, `data.*` fields, and the raw `full_log` at the bottom. Emphasize: **when in doubt, read the full log.**
+3. **☰ → Endpoint security → File Integrity Monitoring** — the FIM dashboard. Use "Explore agent" at the top to pick a host. Probably empty right now (no attacks run yet). That's expected — we'll come back to this view in L2.
+4. **☰ → Endpoint security → Configuration Assessment** — click "Explore agent" → pick one, typically `web-server-01`. Scroll through the failed checks. "This is what a CIS benchmark looks like. These are the boxes a production auditor would ding."
+5. **☰ → Threat intelligence → Vulnerability Detection** — probably empty OR populating. Set expectation: "The vuln pipeline takes about 20 minutes to start populating after first deploy. If it's empty, circle back at the end of L1."
+6. **☰ → Server management → Endpoints Summary** — the agent list (old docs call this "Management → Agents" — renamed in 4.9). Verify 4 active: manager node `000` + web-server-01 + app-server-01 + dev-server-01.
 
 **Callback to deploy-time teaching:** "Remember the alert-level scale I described? Look at the levels on the current alerts. You'll see mostly level 3-7 — that's normal startup noise. Nothing over level 10 yet, which is what we want before we start attacking things."
 
@@ -476,7 +542,7 @@ This is the pedagogy core of L1. **Do not skip.**
 
 > You said "anything high severity." In Wazuh terms that's `rule.level >= 10` in the DQL filter. Let me show you:
 >
-> Go to Security Events, paste this into the filter bar: `rule.level >= 10`
+> Open ☰ → Threat intelligence → Threat Hunting, paste this into the filter bar: `rule.level >= 10`
 >
 > (probably empty or 1-2 results — lab is fresh)
 >
@@ -493,7 +559,7 @@ Do ONE full refinement cycle in L1. The student will feel the rhythm:
 
 > One more before we close L1 — let's see what the SIEM already noticed without any help from us.
 >
-> Modules → Security Configuration Assessment → click web-server-01 → look at the failed checks.
+> ☰ → Endpoint security → Configuration Assessment → "Explore agent" → pick web-server-01 → look at the failed checks.
 >
 > What stands out? (probably: SSH root-login exposure, no MFA on SSH, no auditd rules for privileged commands, some sysctl hardening misses)
 
@@ -510,11 +576,11 @@ Let the student eyeball. Pick ONE finding together and discuss what "remediating
 > - **Keep moving** — on to the vuln panel
 
 Then vulnerabilities:
-> Modules → Vulnerabilities. If empty, tell the student: "Vuln feed takes ~20 min. We'll circle back at start of L2, expect 500+ CVEs — mostly Ubuntu package CVEs the agents came with. That's fine. In real SOC work, the pattern is: a lot of low-severity CVEs on a base image, and your job is to triage which ones matter for THIS workload."
+> ☰ → Threat intelligence → Vulnerability Detection. If empty, tell the student: "Vuln feed takes ~20 min. We'll circle back at start of L2, expect 500+ CVEs — mostly Ubuntu package CVEs the agents came with. That's fine. In real SOC work, the pattern is: a lot of low-severity CVEs on a base image, and your job is to triage which ones matter for THIS workload."
 
 ### Step 7.5 — Security-architecture sidebar (`[optional]`, ~3 min, deep-dive mode only)
 
-For students in deep-dive time mode, do this sidebar after Step 1.4. Skip otherwise.
+For students in deep-dive time mode, do this sidebar after Step 7.4. Skip otherwise.
 
 > Quick sidebar — this lab is intentionally not production-grade. I can name 5 things I'd change before prod. Can you spot any of them looking at the dashboard or the Terraform?
 
