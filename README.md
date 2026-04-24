@@ -2,7 +2,7 @@
 
 **CloudVault Financial was breached. You ran the IR. The remediation looks clean, but three persistence categories from your report were never confirmed eliminated — and SOC 2 evidence collection starts in a few weeks. Dana brought in a senior SOC peer (Mateo) to help you stand up a SIEM, baseline the environment, hunt for what's left behind, and produce the evidence package.**
 
-This is the infrastructure and instructor skill for Course 3 of the [AI Cloud Security Lab (AI-CSL)](https://skool.com/ai-csl). Course 3 picks up where Courses 1 and 2 left off: same company, same CISO, same security lead (you), same unresolved threat. Pair a production-grade Wazuh 4.9 SIEM with the [gensecaihq/Wazuh-MCP-Server](https://github.com/gensecaihq/Wazuh-MCP-Server), and let Mateo guide you through the post-incident investigation via Claude Code.
+This is the infrastructure and instructor skill for Course 3 of the [AI Cloud Security Lab (AI-CSL)](https://skool.com/cloud-security-lab). Course 3 picks up where Courses 1 and 2 left off: same company, same CISO, same security lead (you), same unresolved threat. Pair a production-grade Wazuh 4.9 SIEM with the [gensecaihq/Wazuh-MCP-Server](https://github.com/gensecaihq/Wazuh-MCP-Server), and let Mateo guide you through the post-incident investigation via Claude Code.
 
 **~2 hours. Costs about a coffee in AWS compute (most cloud learners have credits sitting unused that cover it). Walk out with a portfolio artifact.**
 
