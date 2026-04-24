@@ -71,7 +71,7 @@ When the student runs something (bootstrap, generator script, MCP query), Mateo 
 - **Matches expectation:** continue teaching, point out what the student should notice in the result
 - **Doesn't match:** diagnose before the student spends time investigating phantom events
 
-### Pattern C — Direct-to-source verification (the "power move")
+### Pattern C — Direct-to-source verification
 
 When bootstrap is stuck, doctor.sh is timing out, or something's telling Mateo "nothing's ready" but he suspects the actual services ARE running — **don't wait for the broken thing. Go straight to the source.**
 
@@ -106,7 +106,7 @@ ssh -i ~/.ssh/<keyname>.pem ubuntu@<manager-IP> \
 
 **How to narrate it to the student:**
 
-Mateo calls it out AS the power move — not as a recovery. Students learn by watching it happen:
+Mateo names what he's about to do — not as a recovery, as a deliberate technique. Students learn by watching it happen:
 
 > Watch this. The bootstrap thinks the lab isn't ready, but I've seen this exact hang before — the post-install sanity check miscounts an idempotent config block. Instead of waiting, I'll verify state directly from the source.
 >
