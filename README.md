@@ -4,36 +4,28 @@
 
 This is the infrastructure and instructor skill for Course 3 of the [AI Cloud Security Lab (AI-CSL)](https://skool.com/ai-csl). Course 3 picks up where Courses 1 and 2 left off: same company, same CISO, same security lead (you), same unresolved threat. Pair a production-grade Wazuh 4.9 SIEM with the [gensecaihq/Wazuh-MCP-Server](https://github.com/gensecaihq/Wazuh-MCP-Server), and let Mateo guide you through the post-incident investigation via Claude Code.
 
-**~2 hours. ~$0.50 in AWS. One portfolio artifact.**
+**~2 hours. Costs about a coffee in AWS compute (most cloud learners have credits sitting unused that cover it). Walk out with a portfolio artifact.**
 
 ---
 
-## How it works
+## What you'll do
 
-```
-   Your laptop                                       AWS
- ┌──────────────────┐                   ┌─────────────────────────────────┐
- │                  │                   │                                 │
- │  Claude Code     │ ── HTTPS :443 ──► │   Wazuh Manager (t3.large)      │
- │  + Mateo skill   │ ── HTTP  :3000 ─► │   ├─ Manager / Indexer          │
- │  + Wazuh MCP     │ ── SSH   :22  ──► │   ├─ Dashboard                  │
- │    (auto-wired)  │                   │   └─ MCP Server (Docker :3000)  │
- │                  │                   │                                 │
- │  Browser         │ ── HTTPS :443 ──► │   CloudVault agents (t3.micro)  │
- │  (dashboard tour)│                   │   ├─ web-server-01  10.0.1.20   │
- │                  │                   │   ├─ app-server-01  10.0.1.30   │
- └──────────────────┘                   │   └─ dev-server-01  10.0.1.40   │
-                                        │                                 │
-                                        └─────────────────────────────────┘
-```
+Six phases of the investigation, one continuous ~2-hour session:
 
-The MCP server runs on the manager. `bootstrap.sh` installs it, fetches a bearer token, and writes `.mcp.json` in this repo. When you launch Claude Code here, the MCP auto-mounts — no manual setup.
+| # | Phase | What happens |
+|---|---|---|
+| 1 | 🛡️ Stand up the SIEM | Bootstrap deploys everything. Mateo briefs you on the case, walks Wazuh architecture, previews the MCP. You log in, tour the dashboard, run your first query. |
+| 2 | 🎯 Baseline the environment | Exercise four MITRE TTPs on `dev-server-01` matching the pattern classes from your IR report. Investigate the resulting chain manually. Confirm SIEM coverage before hunting. First update to Dana. |
+| 3 | 🔗 Threat-model the MCP, plug it in | Inspect what bootstrap pre-installed. Three concrete failure modes + mitigations (stolen JWT, prompt injection, supply chain). Re-run the baseline investigation through natural language. AI-drafted CISO update, human-verified. |
+| 4 | 🎯 The backdoor hunt | Four structured hunts against the three persistence categories from the IR report (account, listener, scheduler) plus an AI-verification drill. Hunt log becomes SOC 2 evidence. |
+| 5 | ⚡ Tripwires and response | Write custom rule 100001 — the CloudVault client-data tripwire Dana asked for. Validate with `wazuh-logtest`. Deploy, trigger, verify. Take a duration-based active response. |
+| 6 | 🧹 Close the case | Compressed end-to-end IR on a fresh alert. Evidence package for Dana and the SOC 2 audit (CC7.1 / CC7.2). Personal artifact for interviews. `terraform destroy` with verification. |
 
 ---
 
 ## Quick start
 
-**Prerequisites** (5 min): AWS account + CLI configured, Terraform ≥ 1.5, an EC2 key pair in your target region, [Claude Code](https://docs.claude.com/claude-code) CLI.
+**Prerequisites** (5 min): AWS account + CLI configured, Terraform ≥ 1.5, an EC2 key pair in your target region, [Claude Code](https://docs.claude.com/claude-code) CLI. Full checklist below.
 
 ```bash
 # 1. Clone
@@ -58,18 +50,26 @@ Mateo takes it from there. Total deploy time ~20-25 min (Terraform is ~2 min, Wa
 
 ---
 
-## What you'll do
+## How it works (reference)
 
-Six phases of the investigation, one continuous ~2-hour session:
+```
+   Your laptop                                       AWS
+ ┌──────────────────┐                   ┌─────────────────────────────────┐
+ │                  │                   │                                 │
+ │  Claude Code     │ ── HTTPS :443 ──► │   Wazuh Manager (t3.large)      │
+ │  + Mateo skill   │ ── HTTP  :3000 ─► │   ├─ Manager / Indexer          │
+ │  + Wazuh MCP     │ ── SSH   :22  ──► │   ├─ Dashboard                  │
+ │    (auto-wired)  │                   │   └─ MCP Server (Docker :3000)  │
+ │                  │                   │                                 │
+ │  Browser         │ ── HTTPS :443 ──► │   CloudVault agents (t3.micro)  │
+ │  (dashboard tour)│                   │   ├─ web-server-01  10.0.1.20   │
+ │                  │                   │   ├─ app-server-01  10.0.1.30   │
+ └──────────────────┘                   │   └─ dev-server-01  10.0.1.40   │
+                                        │                                 │
+                                        └─────────────────────────────────┘
+```
 
-| # | Phase | What happens |
-|---|---|---|
-| 1 | 🛡️ Stand up the SIEM | Bootstrap deploys everything. Mateo briefs you on the case, walks Wazuh architecture, previews the MCP. You log in, tour the dashboard, run your first query. |
-| 2 | 🎯 Baseline the environment | Exercise four MITRE TTPs on `dev-server-01` matching the pattern classes from your IR report. Investigate the resulting chain manually. Confirm SIEM coverage before hunting. First update to Dana. |
-| 3 | 🔗 Threat-model the MCP, plug it in | Inspect what bootstrap pre-installed. Three concrete failure modes + mitigations (stolen JWT, prompt injection, supply chain). Re-run the baseline investigation through natural language. AI-drafted CISO update, human-verified. |
-| 4 | 🎯 The backdoor hunt | Four structured hunts against the three persistence categories from the IR report (account, listener, scheduler) plus an AI-verification drill. Hunt log becomes SOC 2 evidence. |
-| 5 | ⚡ Tripwires and response | Write custom rule 100001 — the CloudVault client-data tripwire Dana asked for. Validate with `wazuh-logtest`. Deploy, trigger, verify. Take a duration-based active response. |
-| 6 | 🧹 Close the case | Compressed end-to-end IR on a fresh alert. Evidence package for Dana and SOC 2 CC6.7. Personal artifact for interviews. `terraform destroy` with verification. |
+The MCP server runs on the manager. `bootstrap.sh` installs it, fetches a bearer token, and writes `.mcp.json` in this repo. When you launch Claude Code here, the MCP auto-mounts — no manual setup.
 
 ---
 

@@ -33,7 +33,7 @@ Course 3 is a continuation of the CloudVault Financial arc from Courses 1-2. The
 | 3 | 🔗 Threat-model the MCP + plug it in | MCP is pre-installed by user_data + auto-wired into `.mcp.json` by bootstrap.sh. Student inspects what's running, threat-models it (stolen JWT / prompt injection / supply chain), re-runs the baseline investigation via natural language. Verification-as-reflex practice. |
 | 4 | 🎯 The backdoor hunt | Four structured hunts against the three persistence categories from the IR report (account, listener, scheduler) plus an AI-verification drill. Hypothesis / query / disposition framing → hunt log → SOC 2 evidence. |
 | 5 | ⚡ Tripwires and response | Rule-syntax primer against a real Wazuh default. Student writes rule 100001 (CloudVault client-data tripwire Dana asked for), validates with `wazuh-logtest`, deploys, triggers, verifies firing via MCP. Duration-based active response (anti-`wazuh_firewall_allow` quirk). |
-| 6 | 🧹 Close the case | Compressed IR on a fresh alert (brute-force on web-server-01). Evidence package for Dana + SOC 2 CC6.7. Personal artifact for interviews. `terraform destroy` with verification. |
+| 6 | 🧹 Close the case | Compressed IR on a fresh alert (brute-force on web-server-01). Evidence package for Dana + SOC 2 (CC7.1 / CC7.2). Personal artifact for interviews. `terraform destroy` with verification. |
 
 ### Optional paid labs (career-path oriented)
 
