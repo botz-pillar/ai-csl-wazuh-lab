@@ -177,9 +177,20 @@ WUI_PASS=$(echo "$PASSWORDS"   | grep -A1 "api_username: 'wazuh-wui'"   | tail -
 
 if [ -n "$ADMIN_PASS" ] && [ -n "$WUI_PASS" ]; then
   for i in $(seq 1 20); do
-    ACTIVE_AGENTS=$(curl -sk --max-time 5 -u "wazuh-wui:$WUI_PASS" \
-      "https://$MANAGER_IP:55000/agents?status=active&limit=10" 2>/dev/null | \
-      python3 -c 'import sys, json; d=json.load(sys.stdin); print(d.get("data",{}).get("total_affected_items",0))' 2>/dev/null || echo "0")
+    # Wazuh 4.9 requires a JWT for /agents — get one via Basic auth against
+    # /security/user/authenticate, then use the bearer token for the actual query.
+    API_TOKEN=$(curl -sk --max-time 5 -u "wazuh-wui:$WUI_PASS" \
+      -X POST "https://$MANAGER_IP:55000/security/user/authenticate" 2>/dev/null | \
+      python3 -c 'import sys, json; print(json.load(sys.stdin).get("data",{}).get("token",""))' 2>/dev/null || echo "")
+
+    if [ -n "$API_TOKEN" ]; then
+      ACTIVE_AGENTS=$(curl -sk --max-time 5 -H "Authorization: Bearer $API_TOKEN" \
+        "https://$MANAGER_IP:55000/agents?status=active&limit=10" 2>/dev/null | \
+        python3 -c 'import sys, json; d=json.load(sys.stdin); print(d.get("data",{}).get("total_affected_items",0))' 2>/dev/null || echo "0")
+    else
+      ACTIVE_AGENTS=0
+    fi
+
     if [ "$ACTIVE_AGENTS" -ge 4 ]; then
       success "All agents registered ($ACTIVE_AGENTS active including manager node 000)"
       break
@@ -268,7 +279,10 @@ fi
 # Extract admin password from credentials file if available
 ADMIN_PW=""
 if [ -f "$REPO_ROOT/.lab-credentials.txt" ]; then
-  ADMIN_PW=$(grep -E "^\s*admin_password:" "$REPO_ROOT/.lab-credentials.txt" 2>/dev/null | head -1 | sed "s/.*: *'\(.*\)'.*/\1/" || echo "")
+  # The admin password appears as the `indexer_password:` line immediately after
+  # the `indexer_username: 'admin'` line. File has multiple indexer_password entries
+  # (for different users), so we have to anchor on the admin username block.
+  ADMIN_PW=$(grep -A1 "indexer_username: 'admin'" "$REPO_ROOT/.lab-credentials.txt" 2>/dev/null | tail -1 | grep -oE "'[^']+'" | tr -d "'" || echo "")
 fi
 
 # MCP connection status
