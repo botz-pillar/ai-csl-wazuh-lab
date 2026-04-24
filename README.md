@@ -1,8 +1,8 @@
 # AI Cloud Security Lab — Course 3: Wazuh SIEM + AI-augmented SOC
 
-**Deploy a real SIEM on AWS. Simulate a multi-stage attack. Investigate it twice — once manually, once through an AI-augmented workflow — and feel the 10x. Write a detection rule. Take active response. Walk away with a portfolio artifact.**
+**CloudVault Financial was breached. You ran the IR. The remediation looks clean, but three persistence categories from your report were never confirmed eliminated — and SOC 2 evidence collection starts in a few weeks. Dana brought in a senior SOC peer (Mateo) to help you stand up a SIEM, baseline the environment, hunt for what's left behind, and produce the evidence package.**
 
-This is the infrastructure and instructor skill for Course 3 of the [AI Cloud Security Lab (AI-CSL)](https://skool.com/ai-csl). Pair a production-grade Wazuh 4.9 SIEM with the [gensecaihq/Wazuh-MCP-Server](https://github.com/gensecaihq/Wazuh-MCP-Server), and let a senior-SOC-analyst persona (**Mateo**) guide you through the whole arc via Claude Code.
+This is the infrastructure and instructor skill for Course 3 of the [AI Cloud Security Lab (AI-CSL)](https://skool.com/ai-csl). Course 3 picks up where Courses 1 and 2 left off: same company, same CISO, same security lead (you), same unresolved threat. Pair a production-grade Wazuh 4.9 SIEM with the [gensecaihq/Wazuh-MCP-Server](https://github.com/gensecaihq/Wazuh-MCP-Server), and let Mateo guide you through the post-incident investigation via Claude Code.
 
 **~2 hours. ~$0.50 in AWS. One portfolio artifact.**
 
@@ -60,16 +60,16 @@ Mateo takes it from there. Total deploy time ~20-25 min (Terraform is ~2 min, Wa
 
 ## What you'll do
 
-Six lessons, one continuous ~2-hour session:
+Six phases of the investigation, one continuous ~2-hour session:
 
-| # | Lesson | What happens |
+| # | Phase | What happens |
 |---|---|---|
-| L1 | 🛡️ Deploy + dashboard tour | Bootstrap runs, Mateo teaches Terraform / CloudVault scenario / Wazuh arch / MCP preview / dashboard orientation while deploy finishes. Log in, first reverse-prompt cycle, SCA + vuln exploration. |
-| L2 | 🎯 Attack simulation + manual investigation | Run the 4-scenario generator on dev-server-01. Investigate the attack chain manually in the Wazuh dashboard — same DQL filter muscle a real analyst builds. Dana executive summary. |
-| L3 | 🔗 MCP + AI-augmented investigation | Inspect the pre-installed MCP server. Threat-model it (3 concrete failure modes + mitigations each). Re-run L2's investigation in 90 seconds using natural language. Verification-as-reflex practice. |
-| L4 | 🎯 Threat hunting + AI verification | Four structured hunts (accounts, ports, persistence, AI-verification stress test). Build the muscle to audit AI output against raw data. |
-| L5 | ⚡ Detection engineering + active response | Write custom rule 100001 (CloudVault FIM-rate). Validate with `wazuh-logtest` before restart. Deploy, trigger, verify via MCP. Take a duration-based active response. |
-| L6 | 🧹 Incident response + portfolio | Compressed IR cycle (investigate → contain → document). Portfolio Project Card drafted by Mateo to your actual session. `terraform destroy` with verification. |
+| 1 | 🛡️ Stand up the SIEM | Bootstrap deploys everything. Mateo briefs you on the case, walks Wazuh architecture, previews the MCP. You log in, tour the dashboard, run your first query. |
+| 2 | 🎯 Baseline the environment | Exercise four MITRE TTPs on `dev-server-01` matching the pattern classes from your IR report. Investigate the resulting chain manually. Confirm SIEM coverage before hunting. First update to Dana. |
+| 3 | 🔗 Threat-model the MCP, plug it in | Inspect what bootstrap pre-installed. Three concrete failure modes + mitigations (stolen JWT, prompt injection, supply chain). Re-run the baseline investigation through natural language. AI-drafted CISO update, human-verified. |
+| 4 | 🎯 The backdoor hunt | Four structured hunts against the three persistence categories from the IR report (account, listener, scheduler) plus an AI-verification drill. Hunt log becomes SOC 2 evidence. |
+| 5 | ⚡ Tripwires and response | Write custom rule 100001 — the CloudVault client-data tripwire Dana asked for. Validate with `wazuh-logtest`. Deploy, trigger, verify. Take a duration-based active response. |
+| 6 | 🧹 Close the case | Compressed end-to-end IR on a fresh alert. Evidence package for Dana and SOC 2 CC6.7. Personal artifact for interviews. `terraform destroy` with verification. |
 
 ---
 

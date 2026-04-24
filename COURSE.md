@@ -18,16 +18,22 @@ Skool is the front door — landing page, outline, help-question channel, commun
 
 Course 3 has **6 core lessons** that run as one ~2-hour continuous session, plus **5 optional modular labs** (paid add-ons) that use the same deployed lab.
 
-### Core curriculum (in SKILL.md §7–§12)
+### Narrative frame (critical — do not break)
 
-| # | Lesson | What happens |
-|---|--------|--------------|
-| L1 | 🛡️ Deploy + dashboard tour | Student clones the repo, edits `tfvars`, runs `./scripts/bootstrap.sh`. Mateo teaches Terraform/CloudVault/Wazuh-arch/MCP-preview/dashboard during the ~20-min install wait. Login, dashboard tour, first reverse-prompt cycle, SCA + vuln exploration. |
-| L2 | 🎯 Attack sim + manual investigation | SSH to dev-server-01, run `sudo bash /home/ubuntu/generate-events.sh` (4 MITRE-mapped scenarios). Investigate manually in the Wazuh dashboard. Dana exec summary. |
-| L3 | 🔗 MCP + AI investigation | MCP is pre-installed by user_data + auto-wired into `.mcp.json` by bootstrap.sh. Student inspects what's running, threat-models it (3 failure modes), replays L2's investigation via natural language. 10x speedup is felt, not claimed. |
-| L4 | 🎯 Threat hunting + AI verification | 4 structured hunts (unexpected accounts, listening ports, persistence, AI-verification stress test). Hypothesis / query / disposition framing. |
-| L5 | ⚡ Detection engineering + active response | Rule-syntax primer against a real Wazuh default. Student writes rule 100001 (CloudVault FIM-rate), validates with `wazuh-logtest`, deploys, triggers, verifies firing via MCP. Duration-based active response (anti-`wazuh_firewall_allow` quirk). |
-| L6 | 🧹 IR + portfolio + close | Compressed Dana IR scenario. Project Card draft for student's portfolio. #wins post for Skool. `terraform destroy` with verification. |
+Course 3 is a continuation of the CloudVault Financial arc from Courses 1-2. The student is CloudVault's security lead (from C1-C2). **Mateo is a senior SOC analyst brought in by Dana (CISO) after the contractor breach in C2.** He is a peer, not an instructor — never references "Course 3," "Lesson N," "the exercise," or "the simulation" to the student.
+
+**The investigation spine:** the contractor IR from Course 2 flagged three suspected persistence mechanisms (account, network listener, scheduler) that were never confirmed eliminated. Wazuh is being stood up now both to answer "are they still in?" and to provide SOC 2 evidence before the audit. Every phase serves that spine.
+
+### Core arc (in SKILL.md §7–§12)
+
+| # | Phase | What happens |
+|---|-------|--------------|
+| 1 | 🛡️ Stand up the SIEM | Student clones the repo, edits `tfvars`, runs `./scripts/bootstrap.sh`. Mateo briefs the case, walks Terraform / Wazuh architecture / MCP preview / dashboard during the ~20-min install wait. Login, dashboard tour, first reverse-prompt cycle, SCA + vuln exploration. |
+| 2 | 🎯 Baseline the environment | SSH to dev-server-01, run `sudo bash /home/ubuntu/generate-events.sh` (4 MITRE-mapped TTPs matching the IR report's pattern classes). Investigate manually. Confirm SIEM coverage before hunting. First update to Dana. |
+| 3 | 🔗 Threat-model the MCP + plug it in | MCP is pre-installed by user_data + auto-wired into `.mcp.json` by bootstrap.sh. Student inspects what's running, threat-models it (stolen JWT / prompt injection / supply chain), re-runs the baseline investigation via natural language. Verification-as-reflex practice. |
+| 4 | 🎯 The backdoor hunt | Four structured hunts against the three persistence categories from the IR report (account, listener, scheduler) plus an AI-verification drill. Hypothesis / query / disposition framing → hunt log → SOC 2 evidence. |
+| 5 | ⚡ Tripwires and response | Rule-syntax primer against a real Wazuh default. Student writes rule 100001 (CloudVault client-data tripwire Dana asked for), validates with `wazuh-logtest`, deploys, triggers, verifies firing via MCP. Duration-based active response (anti-`wazuh_firewall_allow` quirk). |
+| 6 | 🧹 Close the case | Compressed IR on a fresh alert (brute-force on web-server-01). Evidence package for Dana + SOC 2 CC6.7. Personal artifact for interviews. `terraform destroy` with verification. |
 
 ### Optional paid labs (career-path oriented)
 
@@ -43,9 +49,11 @@ Not in this repo — sold as modular add-ons post-launch. Each uses the same cor
 
 ---
 
-## Fictional scenario: CloudVault Financial
+## Fictional company: CloudVault Financial (canon across C1-C3)
 
-Wealth-management firm, ~80 employees, $2B AUM. Dana is the IT director who hired the student to stand up a SIEM. Audit pressure drives FIM + SCA requirements.
+Mid-size wealth-management firm, **200 employees, $2.1B AUM, Austin**. **Dana Chen is CISO**, not IT director — she hired the student (the security lead) before Course 1. Marcus Webb = junior analyst. Priya Sharma = DevOps lead. Mateo joined as a short-engagement senior peer after the Course 2 contractor breach.
+
+**What happened in Courses 1-2 that Course 3 continues from:** a compromised contractor account escalated via `sts:AssumeRole`, exfiltrated client documents, and attempted CloudTrail cover-up (C2's 28-event attack chain). The IR report flagged three suspected persistence mechanisms the attacker may have left — account, network listener, scheduler — none definitively eliminated. SOC 2 Type II audit ~6 weeks out; evidence collection drives the urgency.
 
 - **Three servers deployed:** `web-server-01` (nginx+TLS portal), `app-server-01` (Python API `/health` + `/api/accounts`), `dev-server-01` (dev workstation + attack launch point)
 - **Wazuh manager + 3 agents**, all monitored by FIM, SCA, rootcheck, vulnerability detection
