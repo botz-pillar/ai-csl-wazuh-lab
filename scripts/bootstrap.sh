@@ -264,26 +264,44 @@ else
   warn "  ssh -i ~/.ssh/$KEY_NAME.pem ubuntu@$MANAGER_IP 'sudo grep -i mcp /var/log/wazuh-install.log | tail -30'"
 fi
 
-# --- Print summary ---
-echo ""
-echo -e "${BOLD}${GREEN}"
-cat << 'SUMMARY'
-============================================
-  Lab Ready
-============================================
-SUMMARY
-echo -e "${NC}"
+# --- Print summary panel ---
+# Extract admin password from credentials file if available
+ADMIN_PW=""
+if [ -f "$REPO_ROOT/.lab-credentials.txt" ]; then
+  ADMIN_PW=$(grep -E "^\s*admin_password:" "$REPO_ROOT/.lab-credentials.txt" 2>/dev/null | head -1 | sed "s/.*: *'\(.*\)'.*/\1/" || echo "")
+fi
 
-echo -e "${BOLD}Dashboard:${NC}  https://$MANAGER_IP"
-echo -e "${BOLD}MCP:${NC}        http://$MANAGER_IP:3000 (bearer auth, wired into .mcp.json)"
-echo -e "${BOLD}SSH:${NC}        ssh -i ~/.ssh/$KEY_NAME.pem ubuntu@$MANAGER_IP"
-echo -e "${BOLD}Credentials:${NC} $REPO_ROOT/.lab-credentials.txt"
+# MCP connection status
+MCP_STATUS="✗ not wired"
+if [ -f "$REPO_ROOT/.mcp.json" ]; then
+  MCP_STATUS="✓ auto-wired (.mcp.json written)"
+fi
+
 echo ""
-echo -e "${BOLD}Next:${NC}"
-echo "  Launch Claude Code in this directory:"
-echo "    claude"
-echo "  Then say: I'm starting Course 3"
-echo "  Mateo (the course instructor) will take it from there."
+echo -e "${BOLD}${GREEN}╔═══════════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}${GREEN}║                         LAB IS LIVE                               ║${NC}"
+echo -e "${BOLD}${GREEN}╚═══════════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${YELLOW}When done:${NC} cd terraform && terraform destroy   ← don't forget, ~\$0.14/hr running"
+echo -e "  ${BOLD}Dashboard:${NC}     https://$MANAGER_IP"
+echo -e "  ${BOLD}Username:${NC}      admin"
+if [ -n "$ADMIN_PW" ]; then
+  echo -e "  ${BOLD}Password:${NC}      $ADMIN_PW"
+else
+  echo -e "  ${BOLD}Password:${NC}      (see .lab-credentials.txt — admin_password)"
+fi
+echo ""
+echo -e "  ${BOLD}MCP server:${NC}    http://$MANAGER_IP:3000  $MCP_STATUS"
+echo -e "  ${BOLD}SSH (manager):${NC} ssh -i ~/.ssh/$KEY_NAME.pem ubuntu@$MANAGER_IP"
+echo ""
+echo -e "  ${BOLD}${BLUE}→ NEXT STEP${NC}"
+echo -e "    1. Accept the self-signed cert warning when you hit the dashboard"
+echo -e "    2. Launch Claude Code in this directory:   ${BOLD}claude${NC}"
+echo -e "    3. Tell Mateo:  ${BOLD}I'm starting Course 3${NC}"
+echo ""
+echo -e "  ${YELLOW}${BOLD}⚠ WHEN YOU'RE DONE${NC}"
+echo -e "    Destroy the lab to stop AWS charges (~\$0.14/hr while running):"
+echo -e "      ${BOLD}cd terraform && terraform destroy${NC}"
+echo ""
+echo -e "  Full creds + connection details:  ${BOLD}.lab-credentials.txt${NC}"
+echo -e "  Troubleshooting:                  ${BOLD}./scripts/doctor.sh${NC}"
 echo ""

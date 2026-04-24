@@ -17,6 +17,7 @@ pass()    { echo -e "  ${GREEN}✓${NC} $*"; PASS=$((PASS + 1)); }
 fail()    { echo -e "  ${RED}✗${NC} $*"; FAILS=$((FAILS + 1)); }
 warn()    { echo -e "  ${YELLOW}!${NC} $*"; WARNS=$((WARNS + 1)); }
 info()    { echo -e "  ${BLUE}i${NC} $*"; }
+hint()    { echo -e "  ${BOLD}${BLUE}→ fix:${NC} $*"; }
 section() { echo -e "\n${BOLD}$*${NC}"; }
 
 PASS=0
@@ -42,18 +43,21 @@ if command -v terraform >/dev/null 2>&1; then
   pass "terraform installed ($(terraform version | head -1 | awk '{print $2}'))"
 else
   fail "terraform not installed"
+  hint "install via: brew install terraform  (macOS)  or see https://terraform.io/downloads"
 fi
 
 if command -v aws >/dev/null 2>&1; then
   pass "aws CLI installed"
 else
   fail "aws CLI not installed"
+  hint "install via: brew install awscli  (macOS)  or see https://aws.amazon.com/cli/"
 fi
 
 if command -v curl >/dev/null 2>&1; then
   pass "curl installed"
 else
   fail "curl not installed"
+  hint "install via your package manager (apt install curl / brew install curl)"
 fi
 
 # --- 2. AWS credentials ---
@@ -62,7 +66,8 @@ if aws sts get-caller-identity >/dev/null 2>&1; then
   ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
   pass "AWS credentials valid (account: $ACCOUNT)"
 else
-  fail "AWS credentials not configured — run: aws configure"
+  fail "AWS credentials not configured or expired"
+  hint "run: aws configure  (long-lived keys) — or refresh your SSO session"
 fi
 
 # --- 3. Terraform state ---
@@ -104,8 +109,10 @@ INSTANCE_COUNT=$(echo "$INSTANCES_JSON" | python3 -c 'import sys, json; d=json.l
 
 if [ "$INSTANCE_COUNT" -eq 0 ]; then
   fail "No lab instances found in AWS"
+  hint "deploy them: ./scripts/bootstrap.sh  (from the repo root)"
 elif [ "$INSTANCE_COUNT" -lt 4 ]; then
   warn "Found $INSTANCE_COUNT instances (expected 4: manager + 3 agents)"
+  hint "if deploy just finished, wait 2-3 min and re-run doctor.sh; otherwise: cd terraform && terraform apply"
 else
   pass "Found $INSTANCE_COUNT instances"
 fi
@@ -128,7 +135,12 @@ HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 5 "https://$MANAG
 if [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "200" ]; then
   pass "API responding (HTTP $HTTP_CODE)"
 elif [ "$HTTP_CODE" = "000" ]; then
-  fail "API not responding — check security group or wait for install to finish"
+  fail "Manager API not reachable on :55000"
+  hint "most common cause: your public IP changed since deploy. Check:"
+  hint "  curl ifconfig.me   (your current IP)"
+  hint "  grep your_ip_cidr terraform/terraform.tfvars   (IP in SG)"
+  hint "  if different: update tfvars, then cd terraform && terraform apply"
+  hint "less common: install hasn't finished. ssh ubuntu@$MANAGER_IP 'sudo tail /var/log/wazuh-install.log'"
 else
   warn "API returned HTTP $HTTP_CODE (expected 401 when auth-required)"
 fi
@@ -139,9 +151,11 @@ INDEXER_CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 5 "https://$MA
 if [ "$INDEXER_CODE" = "401" ] || [ "$INDEXER_CODE" = "200" ]; then
   pass "Indexer responding (HTTP $INDEXER_CODE)"
 elif [ "$INDEXER_CODE" = "000" ]; then
-  fail "Indexer not responding — common cause: OOM kill on smaller instances"
-  info "  SSH to manager and run: sudo systemctl status wazuh-indexer"
-  info "  Check memory: sudo dmesg | grep -i 'killed process'"
+  fail "Indexer not responding"
+  hint "most common cause: OOM — indexer got killed. Manager may need more memory."
+  hint "  ssh ubuntu@$MANAGER_IP 'sudo systemctl status wazuh-indexer'"
+  hint "  ssh ubuntu@$MANAGER_IP 'sudo dmesg | grep -i \"killed process\"'"
+  hint "  if OOM: upgrade manager_instance_type in tfvars to t3.large or larger, terraform apply"
 else
   warn "Indexer returned HTTP $INDEXER_CODE"
 fi
@@ -152,7 +166,9 @@ DASH_CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 5 "https://$MANAG
 if [ "$DASH_CODE" = "200" ] || [ "$DASH_CODE" = "302" ] || [ "$DASH_CODE" = "401" ]; then
   pass "Dashboard responding (HTTP $DASH_CODE)"
 elif [ "$DASH_CODE" = "000" ]; then
-  fail "Dashboard not responding"
+  fail "Dashboard not reachable on :443"
+  hint "same cause as API failure above — usually IP change or SG issue"
+  hint "  verify: curl ifconfig.me  vs  grep your_ip_cidr terraform/terraform.tfvars"
 else
   warn "Dashboard returned HTTP $DASH_CODE"
 fi
@@ -179,8 +195,10 @@ if [ -f "$CREDS_FILE" ]; then
       elif [ "$ACTIVE" -ge 1 ]; then
         warn "$ACTIVE/$TOTAL agents active — still registering? Wait 5 min and re-check"
       else
-        fail "No active agents — check agent install logs"
-        info "  ssh to agent: sudo tail -f /var/log/wazuh-agent-install.log"
+        fail "No active agents registered"
+        hint "first check: were agents deployed <5 min ago? they take a couple minutes to phone home"
+        hint "otherwise ssh to an agent and check install: ssh -i ~/.ssh/KEY.pem ubuntu@AGENT_IP 'sudo tail /var/log/wazuh-agent-install.log'"
+        hint "also check manager→agent network: SG should allow 1514/1515 from 10.0.0.0/16 (lab-internal)"
       fi
     else
       warn "Could not get API token — credentials may be stale"
@@ -223,16 +241,20 @@ if [ "$MCP_CODE" = "200" ]; then
     if grep -q "$MANAGER_IP" "$MCP_JSON"; then
       pass ".mcp.json URL points at current manager ($MANAGER_IP)"
     else
-      warn ".mcp.json URL doesn't match current manager IP — re-run bootstrap.sh to refresh"
+      warn ".mcp.json URL doesn't match current manager IP"
+      hint "run: ./scripts/start-lab.sh  (refreshes .mcp.json with current IP + fresh JWT)"
     fi
   else
-    warn ".mcp.json missing at repo root — re-run bootstrap.sh to write it"
-    info "  Or see docs/mcp-server-setup.md for manual setup"
+    warn ".mcp.json missing at repo root"
+    hint "run: ./scripts/bootstrap.sh  (it writes .mcp.json as its last step)"
+    hint "or manual setup: docs/mcp-server-setup.md"
   fi
 elif [ "$MCP_CODE" = "000" ]; then
   fail "MCP /health not reachable on :3000"
-  info "  Check SG has port 3000 open from your IP (tfvars your_ip_cidr)"
-  info "  Check container is running: ssh ubuntu@$MANAGER_IP 'sudo docker ps | grep wazuh-mcp'"
+  hint "first: is your current IP in the SG?  curl ifconfig.me  vs  grep your_ip_cidr terraform/terraform.tfvars"
+  hint "if IP's fine, check the container:"
+  hint "  ssh ubuntu@$MANAGER_IP 'sudo docker ps | grep wazuh-mcp'"
+  hint "  if no container: ssh ubuntu@$MANAGER_IP 'cd /opt/wazuh-mcp && sudo docker compose up -d'"
 else
   warn "MCP /health returned HTTP $MCP_CODE (expected 200)"
 fi
