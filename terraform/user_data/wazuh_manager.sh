@@ -172,11 +172,20 @@ echo "=== MCP install: writing .env ==="
 WAZUH_API_PASS=$(grep -A1 "api_username: 'wazuh-wui'" /root/wazuh-install-files/wazuh-passwords.txt | tail -1 | grep -oE "'[^']+'" | tr -d "'")
 INDEXER_PASS=$(grep -A1 "indexer_username: 'admin'" /root/wazuh-install-files/wazuh-passwords.txt | tail -1 | grep -oE "'[^']+'" | tr -d "'")
 AUTH_SECRET_KEY=$(openssl rand -hex 32)
-MCP_API_KEY="wazuh_$(openssl rand -hex 24)"
+# MCP_API_KEY format the server validates: "wazuh_" + 43 base64url chars.
+# openssl rand -hex gives hex, which the server rejects (regenerates its
+# own). Use secrets.token_urlsafe(32) = 43 base64url chars, matching the
+# expected shape.
+MCP_API_KEY="wazuh_$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
 
+# WAZUH_HOST / WAZUH_INDEXER_HOST use the manager's STATIC PRIVATE IP
+# (10.0.1.10), not 127.0.0.1. Inside a Docker container, 127.0.0.1
+# resolves to the container itself, NOT the host — so the MCP cannot
+# reach the Wazuh API at localhost. The static IP works because Terraform
+# assigns 10.0.1.10 to the manager and the Docker bridge can reach it.
 cat > /opt/wazuh-mcp/.env <<ENVEOF
-# Wazuh manager API (same host, self-signed cert)
-WAZUH_HOST=https://127.0.0.1
+# Wazuh manager API (static private IP — Docker containers can't see 127.0.0.1 on the host)
+WAZUH_HOST=https://10.0.1.10
 WAZUH_PORT=55000
 WAZUH_USER=wazuh-wui
 WAZUH_PASS=$${WAZUH_API_PASS}
@@ -184,7 +193,7 @@ WAZUH_VERIFY_SSL=false
 WAZUH_ALLOW_SELF_SIGNED=true
 
 # Wazuh indexer (alert search)
-WAZUH_INDEXER_HOST=https://127.0.0.1
+WAZUH_INDEXER_HOST=https://10.0.1.10
 WAZUH_INDEXER_PORT=9200
 WAZUH_INDEXER_USER=admin
 WAZUH_INDEXER_PASS=$${INDEXER_PASS}
@@ -200,15 +209,22 @@ ALLOWED_ORIGINS=https://claude.ai,https://*.anthropic.com,http://localhost:*
 ENVEOF
 chmod 600 /opt/wazuh-mcp/.env
 
-echo "=== MCP install: docker compose pull ==="
-docker compose pull
+# gensecaihq/Wazuh-MCP-Server's compose.yml uses `build:` not a pre-built
+# image on Docker Hub. `docker compose pull` fails (image doesn't exist);
+# we have to `docker compose build` first to build the image locally from
+# the Dockerfile shipped in the repo. The BUILD_DATE arg is required or
+# we get a "variable not set" warning (non-fatal, but noisy).
+export BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+echo "=== MCP install: docker compose build (~3-5 min) ==="
+docker compose build
 
 echo "=== MCP install: docker compose up -d ==="
 docker compose up -d
 
 echo "=== MCP install: waiting for /health ==="
 MCP_READY=0
-for i in $(seq 1 30); do
+for i in $(seq 1 60); do
   CODE=$(curl -s -o /dev/null -w "%%{http_code}" http://127.0.0.1:3000/health 2>/dev/null || echo "000")
   if [ "$${CODE}" = "200" ]; then
     echo "MCP /health responding 200 after $${i}x5s"
@@ -219,8 +235,8 @@ for i in $(seq 1 30); do
 done
 
 if [ "$${MCP_READY}" != "1" ]; then
-  echo "=== WARN: MCP /health did not respond 200 within 150s. Continuing. ==="
-  docker compose logs --tail=50 | sed 's/^/[mcp-log] /'
+  echo "=== WARN: MCP /health did not respond 200 within 300s. Continuing. ==="
+  docker compose logs --tail=80 | sed 's/^/[mcp-log] /'
 fi
 
 # Persist API key for bootstrap.sh retrieval
