@@ -260,6 +260,7 @@ resource "aws_instance" "wazuh_manager" {
   key_name               = var.key_name
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.wazuh_manager.id]
+  private_ip             = "10.0.1.10"  # static IP so agents can reach by hostname
 
   metadata_options {
     http_tokens                 = "required"
@@ -291,15 +292,21 @@ resource "aws_instance" "wazuh_manager" {
 # --------------------------------------------------------------------------
 
 locals {
+  # Static private IPs so agents can resolve each other by hostname via /etc/hosts.
+  # AWS reserves .0-.3 and .255 in each subnet; we start at .10 with 10-IP spacing
+  # to leave room for future growth.
   cloudvault_agents = {
     "web-server-01" = {
-      role = "CloudVault Web Server"
+      role       = "CloudVault Web Server"
+      private_ip = "10.0.1.20"
     }
     "app-server-01" = {
-      role = "CloudVault App Server"
+      role       = "CloudVault App Server"
+      private_ip = "10.0.1.30"
     }
     "dev-server-01" = {
-      role = "CloudVault Dev Server"
+      role       = "CloudVault Dev Server"
+      private_ip = "10.0.1.40"
     }
   }
 }
@@ -313,6 +320,7 @@ resource "aws_instance" "cloudvault_agent" {
   subnet_id                   = aws_subnet.public.id
   vpc_security_group_ids      = [aws_security_group.wazuh_agent.id]
   associate_public_ip_address = true
+  private_ip                  = each.value.private_ip
 
   metadata_options {
     http_tokens                 = "required"
@@ -375,6 +383,13 @@ data "cloudinit_config" "agent" {
       manager_ip    = aws_instance.wazuh_manager.private_ip
       agent_name    = each.key
       wazuh_version = var.wazuh_version
+      # Static IPs for all agents — used to populate /etc/hosts so agents
+      # can resolve each other by hostname. Fixes v4's TARGET_IP hardcoding bug
+      # where the generator script couldn't reach web-server-01 when its IP
+      # didn't happen to match the hardcoded 10.0.1.12.
+      web_server_ip = local.cloudvault_agents["web-server-01"].private_ip
+      app_server_ip = local.cloudvault_agents["app-server-01"].private_ip
+      dev_server_ip = local.cloudvault_agents["dev-server-01"].private_ip
       # Stage the events generator as base64 so the cloud-init script can decode
       # it atomically. Avoids the inline-heredoc fragility that caused v3's
       # deployed script to diverge from the repo source.
