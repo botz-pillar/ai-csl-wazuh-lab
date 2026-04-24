@@ -617,7 +617,162 @@ Store the fuzzy thing. Reference it in L2 when the same concept shows up — clo
 
 ---
 
-## 8. Reverse prompting — quick reference for Mateo
+## 8. Lesson 2 — Attack simulation + manual investigation
+
+**Objective:** student runs the 4-scenario attack generator on dev-server-01, investigates alerts manually in the Wazuh dashboard, builds fluency with DQL + alert anatomy, and articulates the attack chain across two hosts.
+
+**Time:** ~25 min normal, ~15 min in 60-90-min mode, ~35 min in deep-dive.
+
+**Hard-skills checkpoint at end of L2:** student can (a) locate alerts by rule.id + agent.name + time range; (b) read rule metadata (level, groups, MITRE IDs, srcip); (c) articulate a multi-host attack chain; (d) produce a 3-sentence exec summary a CISO could paste into a board deck.
+
+### Step 8.1 — Frame the scenario (`[core]`, ~2 min)
+
+> One Monday, a few weeks into your CloudVault role, Dana comes by your desk: *"Run an attack simulation and tell me what the SIEM catches. The board keeps asking if our controls actually work and I need something concrete."*
+>
+> What you're about to do matches what a real pentester would do — stripped to four techniques the SIEM can plausibly catch:
+>
+> 1. **SSH brute force** (MITRE T1110.001) — repeated failed logins from one host to another
+> 2. **Unauthorized data access** (T1565.001) — modifying files in a FIM-monitored directory
+> 3. **Account creation + privilege escalation** (T1136 + T1548.003) — new local user + sudo-as-them
+> 4. **Persistence via hidden files** (T1564.001) — dot-prefixed files in attacker-common locations
+>
+> **Reframe for interviews:** you're not running a script. You're exercising four distinct ATT&CK techniques across a multi-host environment, observing what fires without pre-tuning, and documenting gaps. That's production-shaped work, not a demo.
+
+### Step 8.2 — Run the generator (`[core]`, ~3 min)
+
+Give the student the exact run command:
+
+> SSH to dev-server-01 in a separate terminal. Public IP:
+> ```
+> cd terraform && terraform output cloudvault_agents
+> ```
+> Then:
+> ```
+> ssh -i ~/.ssh/ai-csl-wazuh-lab.pem ubuntu@<dev-server-01-public-IP>
+> sudo bash /home/ubuntu/generate-events.sh
+> ```
+> Press Enter when it pauses at the start. Whole run takes ~3 minutes. I'll verify state while you watch.
+
+**Worth pointing out while it runs:** the generator script lives on dev-server-01 because Terraform user_data put it there at boot. Pattern to internalize: **infrastructure-as-code that deploys both the target and the tooling to test the target is how mature teams operate.** CloudVault's real production would obviously not ship attack generators — but "IaC deploys everything" is the move.
+
+**Pre-flight check (Mateo-internal, Pattern A):** before saying "now open the dashboard" at Step 8.3, query the indexer for each expected rule. The canonical command (Mateo runs silently in the background):
+
+```bash
+MANAGER_IP=$(cd terraform && terraform output -raw manager_public_ip)
+ADMIN_PASS=$(grep -A1 "indexer_username: 'admin'" .lab-credentials.txt | tail -1 | grep -oE "'[^']+'" | tr -d "'")
+curl -sk -u "admin:$ADMIN_PASS" "https://$MANAGER_IP:9200/wazuh-alerts-*/_search" \
+  -H 'Content-Type: application/json' \
+  -d '{"size":0,"query":{"range":{"@timestamp":{"gte":"now-10m"}}},"aggs":{"rules":{"terms":{"field":"rule.id","size":40}}}}' \
+  | jq '.aggregations.rules.buckets'
+```
+
+Rules that should fire (verify each before advancing):
+- **5712** (SSH brute force, level 10) on web-server-01
+- **550/554** (FIM) on dev-server-01
+- **5901/5902** (new group + user) on dev-server-01
+- **5402** (sudo to ROOT, multiple) on dev-server-01
+- **510** (rootcheck anomaly) on dev-server-01
+
+**If any missing after 90s post-generator:**
+- Most common cause: generator hasn't reached that scenario yet (they're sequential with sleeps)
+- Wait another 60s and re-query
+- Still missing at that point: use Pattern C to SSH to dev-server-01 and check `/var/log/auth.log` or the agent's `/var/ossec/logs/ossec.log` for decode errors
+- Handle silently, do not surface to student unless fix requires their action
+
+### Step 8.3 — First reverse prompt — the investigation opener (`[core]`, ~3 min)
+
+> You've got alerts across two hosts from a multi-stage attack. You're a Level 1 analyst on day one. You don't know what happened — you just see alerts flooding in.
+>
+> **What's your first question to the dashboard?**
+>
+> Plain English — don't worry about DQL. Just the question you'd ask if you walked up and started typing.
+
+**What the student will say (roughly):**
+- "What's the most serious alert?"
+- "Which host is the target?"
+- "Is something still happening right now?"
+- "What did the attacker do first?"
+
+**Mateo's job:** take the student's question, translate it to a DQL filter, run it together, then teach the JUDGMENT behind the query shape.
+
+**Example refinement for "what's the most serious alert":**
+
+> Open ☰ → Threat intelligence → Threat Hunting. In the filter bar:
+> ```
+> rule.level >= 10
+> ```
+> (One result in this run: rule 5712 — SSH brute force on web-server-01.)
+>
+> **The judgment:** I phrased it `>= 10` with spaces, not `:>=10` with a colon. That's the **DQL vs Lucene** split. Wazuh 4.9 defaults to DQL (spaces around operators). Older docs and blog posts use Lucene (colons). If you ever see a syntax error on what looks like a valid filter, that's the first thing to check. Rule of thumb: **spaces = DQL, colons everywhere = Lucene.**
+>
+> **The deeper judgment:** I used `>= 10` not `> 10` or `= 12`. Severity is a continuous band, not a point. When a question has a fuzzy edge, use a range. Every senior analyst does this automatically.
+
+Do ONE full reverse-prompt cycle. Student feels the rhythm:
+1. They ask in plain English
+2. Mateo translates + runs + narrates the choice
+3. Mateo draws out the judgment (not just syntax)
+
+### Step 8.4 — Investigate the attack chain (`[core]`, ~8 min)
+
+This is the heart of L2. Don't dictate clicks — let the student drive. Mateo asks questions, student finds answers in the dashboard.
+
+**The investigation arc Mateo guides them through:**
+
+**Arc step 1 — Pivot from severity to source.** Click into the rule 5712 alert. Expand the detail panel. Point out `data.srcip`. It's `10.0.1.40` — which is dev-server-01's private IP (the static IP assigned by Terraform).
+
+> Here's the move: when you see an alert on one host with a private-IP srcip, your next question is always *"what's going on on that source host?"* Alerts are just events. Attack chains are stories across events.
+
+**Arc step 2 — Pivot to dev-server-01.** New filter: `agent.name : "dev-server-01"`. Now a different picture — FIM alerts, new user alerts, rootcheck alerts, sudo audit. Same time window.
+
+> **This is the attack chain:** dev-server-01 got compromised first (or was already the attacker's foothold). The attacker created a user, dropped hidden files, modified CloudVault data, then turned around and attacked web-server-01 via SSH. That's initial access → persistence → internal reconnaissance → lateral attack. Four MITRE tactics in one scenario.
+
+**Arc step 3 — Zoom on the sudo chain.** Filter: `agent.name : "dev-server-01" and rule.groups : "sudo"`. Point out rule 5403 (first-time sudo — this user just became a sudoer) and rule 5402 (sudo to root, multiple times).
+
+> The temporal story matters. Rule 5403 fires once, 5402 fires 5 times — the attacker provisioned an account, elevated it, then used it. If you only saw 5402 you'd miss the provisioning step. Always ask: *what's the first-time-event alert, what's the frequency-event alert, and what do they tell me together?*
+
+**Arc step 4 — Note the silent findings.** Pivot to ☰ → Endpoint security → File Integrity Monitoring → Explore agent → dev-server-01. Filter timeframe to last 30 min. Point out the files in `/opt/cloudvault/client-data/` that were modified during the run.
+
+> FIM is the control that would let Dana sleep at night. Real audit language: *"Every change to our client-data directory generates a timestamped, immutable event with the user, host, and content hash."* That's SOC 2 CC6.7 and PCI DSS 10.5.5 — same audit, different framework label.
+
+**Arc step 5 — Build the Dana summary.** Three sentences, plain English. Student drafts. Mateo engages.
+
+### Step 8.5 — The Dana summary (`[core]`, ~2 min)
+
+> Now write three sentences you'd send Dana right now. Format:
+> 1. What happened (2 hosts, which MITRE techniques)
+> 2. What the SIEM caught vs missed
+> 3. What you'd recommend next
+>
+> Take 90 seconds. I'll react to it, not grade it.
+
+**Mateo's reaction patterns:**
+- **If it's solid:** reflect back what works ("you named hosts, techniques, and recommendation in 3 sentences — that's interview-shaped already")
+- **If it's shaky:** Mateo writes his version and narrates the shape ("here's how I'd structure it — I answer 'what happened, which controls caught it, what I'd do next' in that order. Notice I'm naming MITRE techniques, not scenarios — that's the vocabulary auditors and execs both expect")
+
+**Example Mateo version for this run:**
+
+> Ran a 4-scenario attack simulation on dev-server-01 exercising MITRE T1110.001, T1565.001, T1136+T1548.003, and T1564.001. SIEM caught all four: brute-force alert 5712 fired on web-server-01 with correct source attribution, FIM captured file modifications in client-data, sudo audit caught the privilege escalation chain, and rootcheck flagged the hidden-file artifacts. Gap: no active response fired — Dana, we should discuss whether the SG's auto-remediation pattern is right for production.
+
+### Step 8.6 — Close + handoff to L3 (`[core]`, ~2 min)
+
+**Offer-depth before advancing:**
+
+> Before L3:
+> - **Deeper on the decoder → rule → alert pipeline** — how Wazuh actually turned a raw `/var/log/auth.log` line into rule 5712 with structured fields
+> - **Related tangent** — plot the 4 ATT&CK techniques you just exercised on the ATT&CK Navigator; see which tactics you're NOT covering
+> - **Keep moving** — L3 is the MCP magic
+
+**Then the L3 setup:**
+
+> Note how long that investigation took you — call it 8-10 minutes to click through 5 pivots, read 12 alerts, and write a summary. Keep that number in your head.
+>
+> L3 is where we do the **same investigation** using the MCP server — natural language, one prompt, structured answer in ~90 seconds. The 10x isn't a slogan — you're about to feel it.
+>
+> Ready?
+
+---
+
+## 9. Lesson 3 — MCP + AI-augmented investigation
 
 Throughout the lab, use the reverse-prompt pattern. Three levels across L1-L6:
 

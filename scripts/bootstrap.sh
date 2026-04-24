@@ -190,6 +190,80 @@ if [ -n "$ADMIN_PASS" ] && [ -n "$WUI_PASS" ]; then
   echo ""
 fi
 
+# --- Wait for MCP server + wire up .mcp.json ---
+#
+# The manager's user_data pre-installs the Wazuh MCP server (Docker on :3000,
+# bearer auth). We wait for /health, pull the API key via SSH, exchange it
+# for a JWT, and write .mcp.json in the repo root so Claude Code auto-mounts
+# the MCP the next time the student launches `claude` in this directory.
+#
+# Why pre-install + auto-wire: L3 is about learning to threat-model MCP,
+# not about fighting Docker/CORS/auth flows. Install drudgery is a 45-min
+# distraction from the pedagogy. All the security considerations still
+# show up as L3 teaching content.
+echo ""
+info "Waiting for MCP server on the manager..."
+
+MCP_READY=0
+for i in $(seq 1 40); do
+  MCP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://$MANAGER_IP:3000/health" 2>/dev/null || echo "000")
+  if [ "$MCP_CODE" = "200" ]; then
+    success "MCP server responding on :3000"
+    MCP_READY=1
+    break
+  fi
+  printf "  [%02d/40] MCP /health response: %s\r" "$i" "$MCP_CODE"
+  sleep 15
+done
+echo ""
+
+if [ "$MCP_READY" = "1" ]; then
+  info "Fetching MCP API key from manager..."
+  MCP_API_KEY=$(ssh -i ~/.ssh/$KEY_NAME.pem $SSH_OPTS \
+    ubuntu@$MANAGER_IP 'sudo cat /root/wazuh-mcp-api-key.txt 2>/dev/null' 2>/dev/null || echo "")
+
+  if [ -n "$MCP_API_KEY" ]; then
+    info "Exchanging API key for bearer JWT..."
+    JWT=$(curl -s --max-time 10 -X POST "http://$MANAGER_IP:3000/auth/token" \
+      -H "Content-Type: application/json" \
+      -d "{\"api_key\":\"$MCP_API_KEY\"}" \
+      | python3 -c 'import sys, json
+try:
+    d=json.load(sys.stdin)
+    print(d.get("access_token") or d.get("token") or "")
+except Exception:
+    print("")' 2>/dev/null || echo "")
+
+    if [ -n "$JWT" ]; then
+      cat > "$REPO_ROOT/.mcp.json" <<MCPEOF
+{
+  "mcpServers": {
+    "wazuh": {
+      "type": "http",
+      "url": "http://$MANAGER_IP:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer $JWT"
+      }
+    }
+  }
+}
+MCPEOF
+      chmod 600 "$REPO_ROOT/.mcp.json"
+      success "MCP wired. .mcp.json written to $REPO_ROOT/.mcp.json"
+      info "Claude Code will auto-mount the 'wazuh' MCP the next time you launch it here."
+    else
+      warn "Could not exchange API key for JWT. MCP is up but .mcp.json not written."
+      warn "Manual workaround in docs/mcp-server-setup.md — L3 walks through it."
+    fi
+  else
+    warn "Could not fetch MCP API key via SSH. Manager may still be finalizing."
+    warn "Re-run bootstrap.sh after a few minutes, or see docs/mcp-server-setup.md."
+  fi
+else
+  warn "MCP server /health did not respond within 10 minutes. Check manager logs:"
+  warn "  ssh -i ~/.ssh/$KEY_NAME.pem ubuntu@$MANAGER_IP 'sudo grep -i mcp /var/log/wazuh-install.log | tail -30'"
+fi
+
 # --- Print summary ---
 echo ""
 echo -e "${BOLD}${GREEN}"
@@ -200,14 +274,16 @@ cat << 'SUMMARY'
 SUMMARY
 echo -e "${NC}"
 
-echo -e "${BOLD}Dashboard:${NC} https://$MANAGER_IP"
-echo -e "${BOLD}SSH:${NC}       ssh -i ~/.ssh/$KEY_NAME.pem ubuntu@$MANAGER_IP"
+echo -e "${BOLD}Dashboard:${NC}  https://$MANAGER_IP"
+echo -e "${BOLD}MCP:${NC}        http://$MANAGER_IP:3000 (bearer auth, wired into .mcp.json)"
+echo -e "${BOLD}SSH:${NC}        ssh -i ~/.ssh/$KEY_NAME.pem ubuntu@$MANAGER_IP"
 echo -e "${BOLD}Credentials:${NC} $REPO_ROOT/.lab-credentials.txt"
 echo ""
 echo -e "${BOLD}Next:${NC}"
-echo "  1. Log in to the dashboard (admin + password from .lab-credentials.txt)"
-echo "  2. Run ./scripts/doctor.sh any time to check lab health"
-echo "  3. Continue to Course 3 Lesson 1"
+echo "  Launch Claude Code in this directory:"
+echo "    claude"
+echo "  Then say: I'm starting Course 3"
+echo "  Mateo (the course instructor) will take it from there."
 echo ""
-echo -e "${YELLOW}When done:${NC} terraform destroy   ← don't forget, ~\$0.11/hr running"
+echo -e "${YELLOW}When done:${NC} cd terraform && terraform destroy   ← don't forget, ~\$0.14/hr running"
 echo ""
