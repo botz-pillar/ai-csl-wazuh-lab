@@ -155,6 +155,18 @@ resource "aws_security_group" "wazuh_manager" {
     cidr_blocks = [var.your_ip_cidr]
   }
 
+  # Wazuh MCP server (HTTP, bearer-auth). Pre-installed on the manager by
+  # user_data. Same security model as the dashboard: IP-restricted, bearer
+  # token on top. The L3 security teaching covers the threat model of
+  # exposing this — students learn to put it behind a VPN or bastion in prod.
+  ingress {
+    description = "Wazuh MCP server (HTTP + bearer)"
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = [var.your_ip_cidr]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0

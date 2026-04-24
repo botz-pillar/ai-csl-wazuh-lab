@@ -177,9 +177,20 @@ WUI_PASS=$(echo "$PASSWORDS"   | grep -A1 "api_username: 'wazuh-wui'"   | tail -
 
 if [ -n "$ADMIN_PASS" ] && [ -n "$WUI_PASS" ]; then
   for i in $(seq 1 20); do
-    ACTIVE_AGENTS=$(curl -sk --max-time 5 -u "wazuh-wui:$WUI_PASS" \
-      "https://$MANAGER_IP:55000/agents?status=active&limit=10" 2>/dev/null | \
-      python3 -c 'import sys, json; d=json.load(sys.stdin); print(d.get("data",{}).get("total_affected_items",0))' 2>/dev/null || echo "0")
+    # Wazuh 4.9 requires a JWT for /agents — get one via Basic auth against
+    # /security/user/authenticate, then use the bearer token for the actual query.
+    API_TOKEN=$(curl -sk --max-time 5 -u "wazuh-wui:$WUI_PASS" \
+      -X POST "https://$MANAGER_IP:55000/security/user/authenticate" 2>/dev/null | \
+      python3 -c 'import sys, json; print(json.load(sys.stdin).get("data",{}).get("token",""))' 2>/dev/null || echo "")
+
+    if [ -n "$API_TOKEN" ]; then
+      ACTIVE_AGENTS=$(curl -sk --max-time 5 -H "Authorization: Bearer $API_TOKEN" \
+        "https://$MANAGER_IP:55000/agents?status=active&limit=10" 2>/dev/null | \
+        python3 -c 'import sys, json; d=json.load(sys.stdin); print(d.get("data",{}).get("total_affected_items",0))' 2>/dev/null || echo "0")
+    else
+      ACTIVE_AGENTS=0
+    fi
+
     if [ "$ACTIVE_AGENTS" -ge 4 ]; then
       success "All agents registered ($ACTIVE_AGENTS active including manager node 000)"
       break
@@ -190,24 +201,121 @@ if [ -n "$ADMIN_PASS" ] && [ -n "$WUI_PASS" ]; then
   echo ""
 fi
 
-# --- Print summary ---
+# --- Wait for MCP server + wire up .mcp.json ---
+#
+# The manager's user_data pre-installs the Wazuh MCP server (Docker on :3000,
+# bearer auth). We wait for /health, pull the API key via SSH, exchange it
+# for a JWT, and write .mcp.json in the repo root so Claude Code auto-mounts
+# the MCP the next time the student launches `claude` in this directory.
+#
+# Why pre-install + auto-wire: L3 is about learning to threat-model MCP,
+# not about fighting Docker/CORS/auth flows. Install drudgery is a 45-min
+# distraction from the pedagogy. All the security considerations still
+# show up as L3 teaching content.
 echo ""
-echo -e "${BOLD}${GREEN}"
-cat << 'SUMMARY'
-============================================
-  Lab Ready
-============================================
-SUMMARY
-echo -e "${NC}"
+info "Waiting for MCP server on the manager..."
 
-echo -e "${BOLD}Dashboard:${NC} https://$MANAGER_IP"
-echo -e "${BOLD}SSH:${NC}       ssh -i ~/.ssh/$KEY_NAME.pem ubuntu@$MANAGER_IP"
-echo -e "${BOLD}Credentials:${NC} $REPO_ROOT/.lab-credentials.txt"
+MCP_READY=0
+for i in $(seq 1 40); do
+  MCP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://$MANAGER_IP:3000/health" 2>/dev/null || echo "000")
+  if [ "$MCP_CODE" = "200" ]; then
+    success "MCP server responding on :3000"
+    MCP_READY=1
+    break
+  fi
+  printf "  [%02d/40] MCP /health response: %s\r" "$i" "$MCP_CODE"
+  sleep 15
+done
 echo ""
-echo -e "${BOLD}Next:${NC}"
-echo "  1. Log in to the dashboard (admin + password from .lab-credentials.txt)"
-echo "  2. Run ./scripts/doctor.sh any time to check lab health"
-echo "  3. Continue to Course 3 Lesson 1"
+
+if [ "$MCP_READY" = "1" ]; then
+  info "Fetching MCP API key from manager..."
+  MCP_API_KEY=$(ssh -i ~/.ssh/$KEY_NAME.pem $SSH_OPTS \
+    ubuntu@$MANAGER_IP 'sudo cat /root/wazuh-mcp-api-key.txt 2>/dev/null' 2>/dev/null || echo "")
+
+  if [ -n "$MCP_API_KEY" ]; then
+    info "Exchanging API key for bearer JWT..."
+    JWT=$(curl -s --max-time 10 -X POST "http://$MANAGER_IP:3000/auth/token" \
+      -H "Content-Type: application/json" \
+      -d "{\"api_key\":\"$MCP_API_KEY\"}" \
+      | python3 -c 'import sys, json
+try:
+    d=json.load(sys.stdin)
+    print(d.get("access_token") or d.get("token") or "")
+except Exception:
+    print("")' 2>/dev/null || echo "")
+
+    if [ -n "$JWT" ]; then
+      cat > "$REPO_ROOT/.mcp.json" <<MCPEOF
+{
+  "mcpServers": {
+    "wazuh": {
+      "type": "http",
+      "url": "http://$MANAGER_IP:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer $JWT"
+      }
+    }
+  }
+}
+MCPEOF
+      chmod 600 "$REPO_ROOT/.mcp.json"
+      success "MCP wired. .mcp.json written to $REPO_ROOT/.mcp.json"
+      info "Claude Code will auto-mount the 'wazuh' MCP the next time you launch it here."
+    else
+      warn "Could not exchange API key for JWT. MCP is up but .mcp.json not written."
+      warn "Manual workaround in docs/mcp-server-setup.md — L3 walks through it."
+    fi
+  else
+    warn "Could not fetch MCP API key via SSH. Manager may still be finalizing."
+    warn "Re-run bootstrap.sh after a few minutes, or see docs/mcp-server-setup.md."
+  fi
+else
+  warn "MCP server /health did not respond within 10 minutes. Check manager logs:"
+  warn "  ssh -i ~/.ssh/$KEY_NAME.pem ubuntu@$MANAGER_IP 'sudo grep -i mcp /var/log/wazuh-install.log | tail -30'"
+fi
+
+# --- Print summary panel ---
+# Extract admin password from credentials file if available
+ADMIN_PW=""
+if [ -f "$REPO_ROOT/.lab-credentials.txt" ]; then
+  # The admin password appears as the `indexer_password:` line immediately after
+  # the `indexer_username: 'admin'` line. File has multiple indexer_password entries
+  # (for different users), so we have to anchor on the admin username block.
+  ADMIN_PW=$(grep -A1 "indexer_username: 'admin'" "$REPO_ROOT/.lab-credentials.txt" 2>/dev/null | tail -1 | grep -oE "'[^']+'" | tr -d "'" || echo "")
+fi
+
+# MCP connection status
+MCP_STATUS="✗ not wired"
+if [ -f "$REPO_ROOT/.mcp.json" ]; then
+  MCP_STATUS="✓ auto-wired (.mcp.json written)"
+fi
+
 echo ""
-echo -e "${YELLOW}When done:${NC} terraform destroy   ← don't forget, ~\$0.11/hr running"
+echo -e "${BOLD}${GREEN}╔═══════════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}${GREEN}║                         LAB IS LIVE                               ║${NC}"
+echo -e "${BOLD}${GREEN}╚═══════════════════════════════════════════════════════════════════╝${NC}"
+echo ""
+echo -e "  ${BOLD}Dashboard:${NC}     https://$MANAGER_IP"
+echo -e "  ${BOLD}Username:${NC}      admin"
+if [ -n "$ADMIN_PW" ]; then
+  echo -e "  ${BOLD}Password:${NC}      $ADMIN_PW"
+else
+  echo -e "  ${BOLD}Password:${NC}      (see .lab-credentials.txt — admin_password)"
+fi
+echo ""
+echo -e "  ${BOLD}MCP server:${NC}    http://$MANAGER_IP:3000  $MCP_STATUS"
+echo -e "  ${BOLD}SSH (manager):${NC} ssh -i ~/.ssh/$KEY_NAME.pem ubuntu@$MANAGER_IP"
+echo ""
+echo -e "  ${BOLD}${BLUE}→ NEXT STEP${NC}"
+echo -e "    1. Accept the self-signed cert warning when you hit the dashboard"
+echo -e "    2. Launch Claude Code in this directory:   ${BOLD}claude${NC}"
+echo -e "    3. Tell Mateo:  ${BOLD}I'm starting Course 3${NC}"
+echo ""
+echo -e "  ${YELLOW}${BOLD}⚠ WHEN YOU'RE DONE${NC}"
+echo -e "    Destroy the lab to stop AWS charges (~\$0.14/hr while running):"
+echo -e "      ${BOLD}cd terraform && terraform destroy${NC}"
+echo ""
+echo -e "  Full creds + connection details:  ${BOLD}.lab-credentials.txt${NC}"
+echo -e "  Troubleshooting:                  ${BOLD}./scripts/doctor.sh${NC}"
 echo ""

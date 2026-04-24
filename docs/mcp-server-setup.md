@@ -1,274 +1,203 @@
-# Wazuh MCP Server Setup Guide
+# MCP Server — reference
 
-Connect Claude Code to your Wazuh SIEM so you can query alerts, investigate incidents, and take response actions using natural language.
+The Wazuh MCP server is **pre-installed** on the manager by `terraform/user_data/wazuh_manager.sh` and auto-wired into Claude Code by `scripts/bootstrap.sh`. You don't set it up by hand. This doc exists to explain what was installed, how to troubleshoot it, and how to reproduce the install yourself if you want to run MCP against your own Wazuh deployment (production or homelab).
 
-This guide uses [gensecaihq/Wazuh-MCP-Server](https://github.com/gensecaihq/Wazuh-MCP-Server) **v4.2.1**, which exposes 48 tools spanning alert search, agent management, vulnerability queries, compliance checks, and active response.
+**Upstream:** [gensecaihq/Wazuh-MCP-Server](https://github.com/gensecaihq/Wazuh-MCP-Server) — containerized HTTP MCP, bearer auth, supports Wazuh 4.8–4.14.
 
-## Architecture
+---
 
-The MCP server runs as an HTTP service on port 3000 and exposes a `/mcp` endpoint. Claude Code connects to it with a bearer token.
+## What bootstrap.sh did for you
 
+Four things beyond the Wazuh install:
+
+1. **Installed Docker + Compose v2** on the manager (the distro's `docker.io` package doesn't include Compose v2; cloud-init adds Docker's official apt repo).
+2. **Cloned the MCP server repo** to `/opt/wazuh-mcp` on the manager and generated `/opt/wazuh-mcp/.env` with:
+   - Wazuh API credentials for the `wazuh-wui` user (pulled from `/root/wazuh-install-files.tar`)
+   - Wazuh indexer admin credentials (same source)
+   - A generated `AUTH_SECRET_KEY` (32-byte hex, used to sign JWTs)
+   - A generated `MCP_API_KEY` (the `wazuh_...` prefix one — client presents this to `/auth/token` to get a JWT)
+   - `MCP_HOST=0.0.0.0` so the container binds all interfaces (not just localhost)
+3. **Ran `docker compose up -d`** and waited for `GET /health` to respond 200.
+4. **Persisted `MCP_API_KEY` to `/root/wazuh-mcp-api-key.txt`** on the manager so bootstrap.sh can retrieve it.
+
+Then bootstrap.sh from your laptop:
+
+5. SSH'd to the manager and pulled `/root/wazuh-mcp-api-key.txt` via `sudo cat`
+6. POSTed that API key to `http://<manager-IP>:3000/auth/token` → got back a JWT
+7. Wrote `.mcp.json` in the repo root pointing Claude Code at `http://<manager-IP>:3000/mcp` with the JWT as a bearer header
+
+When you launch `claude` in this directory, Claude Code reads `.mcp.json` at startup and auto-mounts the `wazuh` MCP server.
+
+---
+
+## The two-step auth flow
+
+Authentication is TWO steps. This trips up everyone the first time:
+
+1. **API key** (`wazuh_...`) → goes in the server's `/opt/wazuh-mcp/.env` file
+2. **JWT** → goes in Claude Code's `.mcp.json`
+
+The API key is NOT a valid bearer token. If you put it directly in `.mcp.json` as the bearer value, you get `{"detail":"Invalid or expired token"}`. **Exchange the API key for a JWT first** by POSTing to `/auth/token`. Bootstrap does this for you; if you set this up by hand, you have to do it yourself.
+
+**Why the two-step?** Separates long-lived credentials (API key, lives in the server env) from short-lived ones (JWT, 24h default, carried by the client). If the JWT leaks, it's expired within a day. If the API key leaks, you rotate it in `.env` + restart.
+
+---
+
+## File reference
+
+| Location | What it is |
+|---|---|
+| `/opt/wazuh-mcp/` | Cloned MCP repo on the manager |
+| `/opt/wazuh-mcp/.env` | MCP config — Wazuh creds + MCP_API_KEY + AUTH_SECRET_KEY. `chmod 600`. |
+| `/opt/wazuh-mcp/compose.yml` | Docker Compose manifest |
+| `/root/wazuh-mcp-api-key.txt` | API key, persisted for bootstrap.sh retrieval. `chmod 600`. |
+| `.mcp.json` (repo root, local) | Claude Code MCP config. Contains JWT. `chmod 600`, gitignored. |
+
+---
+
+## Troubleshooting
+
+### `/mcp` in Claude Code says `wazuh` is not connected
+
+**Most common cause:** your Claude Code session started before bootstrap finished. It loads `.mcp.json` at launch, so a session started too early won't see it.
+
+**Fix:** `/exit` Claude Code, then re-launch `claude` in the repo directory.
+
+### `/mcp` shows `wazuh` but status is "error"
+
+Check the JWT is still valid (24h default lifetime):
+```bash
+cat .mcp.json | jq -r '.mcpServers.wazuh.headers.Authorization'
 ```
-Claude Code ──(HTTP + Bearer JWT)──> MCP Server :3000/mcp ──(HTTPS)──> Wazuh Manager (:55000) + Indexer (:9200)
-```
+If the token is stale, re-run `./scripts/bootstrap.sh` — it'll write a fresh `.mcp.json`.
 
-**Authentication is TWO steps.** This is the subtle part of the setup:
-1. You generate an **API key** (`wazuh_...`). This goes in the server's `.env` file.
-2. You exchange the API key at the `/auth/token` endpoint for a **JWT**. The JWT goes in Claude Code's `.mcp.json`.
-
-The API key is NOT a valid bearer token on its own. If you try using it directly as a bearer, you'll get `{"detail":"Invalid or expired token"}`. Exchange it first.
-
-## Prerequisites
-
-- Wazuh lab deployed and healthy (`./scripts/doctor.sh` all green)
-- Credentials from `.lab-credentials.txt` (created by `./scripts/bootstrap.sh`)
-- Claude Code installed
-- **Python 3.11+ required** (the server depends on `fastmcp` which does not support 3.10)
-
-## Step 1 — Clone the MCP server + install
+### `/health` doesn't respond
 
 ```bash
-cd ~/projects  # or wherever you keep code
-git clone https://github.com/gensecaihq/Wazuh-MCP-Server.git
-cd Wazuh-MCP-Server
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -e .
+MANAGER_IP=$(cd terraform && terraform output -raw manager_public_ip)
+curl -v http://$MANAGER_IP:3000/health
 ```
 
-The `-e .` does an editable install using `pyproject.toml`. Takes ~90 seconds.
+If you get connection refused: security group isn't open on :3000 from your IP. Check `tfvars your_ip_cidr` matches `curl ifconfig.me`, then `terraform apply` to update the SG.
 
-## Step 2 — Generate two secrets
+If you get a timeout: container is down. SSH in and check:
+```bash
+ssh -i ~/.ssh/ai-csl-wazuh-lab.pem ubuntu@$MANAGER_IP 'sudo docker ps -a | grep wazuh-mcp'
+ssh -i ~/.ssh/ai-csl-wazuh-lab.pem ubuntu@$MANAGER_IP 'cd /opt/wazuh-mcp && sudo docker compose logs --tail 50'
+```
 
-You need two values: an API key and a JWT signing secret. Generate both:
+### MCP responds but all queries return 401/403
+
+The server can reach itself but can't reach Wazuh. Most likely: `WAZUH_VERIFY_SSL=false` missing, or `WAZUH_PASS` wrong. SSH in and check:
+```bash
+ssh -i ~/.ssh/ai-csl-wazuh-lab.pem ubuntu@$MANAGER_IP 'sudo cat /opt/wazuh-mcp/.env'
+```
+Compare `WAZUH_PASS` against `/root/wazuh-install-files/wazuh-passwords.txt`'s `wazuh-wui` password.
+
+---
+
+## Manual setup — if you want to replicate against your own Wazuh
+
+For students who want to understand the install or replicate against a non-lab Wazuh:
+
+### Prerequisites
+- Ubuntu 22.04+ host that can reach your Wazuh manager on :55000 and indexer on :9200
+- Docker CE + Compose v2 plugin
+- Wazuh API credentials (typically the `wazuh-wui` user from `wazuh-install-files.tar`)
+
+### Steps
 
 ```bash
-# API key — what clients present to exchange for a JWT
-python3 -c "import secrets; print('MCP_API_KEY=wazuh_' + secrets.token_urlsafe(32))"
+# 1. Docker + Compose v2
+apt-get update
+apt-get install -y ca-certificates curl gnupg git openssl
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu jammy stable" > /etc/apt/sources.list.d/docker.list
+apt-get update
+apt-get install -y docker-ce docker-compose-plugin
+systemctl enable --now docker
 
-# JWT signing key — server uses this internally to sign tokens
-echo "AUTH_SECRET_KEY=$(openssl rand -hex 32)"
-```
+# 2. Clone
+git clone --depth 1 https://github.com/gensecaihq/Wazuh-MCP-Server.git /opt/wazuh-mcp
+cd /opt/wazuh-mcp
 
-Save both lines — you'll paste them into `.env` next.
+# 3. Generate secrets
+AUTH_SECRET_KEY=$(openssl rand -hex 32)
+MCP_API_KEY="wazuh_$(openssl rand -hex 24)"
 
-## Step 3 — Create .env
-
-In the `Wazuh-MCP-Server` directory, create `.env`:
-
-```
-# --- Wazuh Manager API ---
-WAZUH_HOST=https://YOUR_MANAGER_IP
+# 4. Write .env (fill in your Wazuh creds)
+cat > .env <<EOF
+WAZUH_HOST=https://<your-wazuh-manager>
 WAZUH_PORT=55000
 WAZUH_USER=wazuh-wui
-WAZUH_PASS=YOUR_WAZUH_WUI_PASSWORD
+WAZUH_PASS=<your-wazuh-wui-password>
 WAZUH_VERIFY_SSL=false
 WAZUH_ALLOW_SELF_SIGNED=true
-
-# --- Wazuh Indexer ---
-WAZUH_INDEXER_HOST=YOUR_MANAGER_IP
+WAZUH_INDEXER_HOST=https://<your-wazuh-manager>
 WAZUH_INDEXER_PORT=9200
 WAZUH_INDEXER_USER=admin
-WAZUH_INDEXER_PASS=YOUR_ADMIN_PASSWORD
-WAZUH_INDEXER_VERIFY_SSL=false
-
-# --- MCP Server ---
-MCP_HOST=127.0.0.1
+WAZUH_INDEXER_PASS=<your-indexer-admin-password>
+MCP_HOST=0.0.0.0
 MCP_PORT=3000
 AUTH_MODE=bearer
-AUTH_SECRET_KEY=your-hex-secret-from-step-2
-MCP_API_KEY=wazuh_your-key-from-step-2
+AUTH_SECRET_KEY=$AUTH_SECRET_KEY
+MCP_API_KEY=$MCP_API_KEY
+TOKEN_LIFETIME_HOURS=24
+ALLOWED_ORIGINS=https://claude.ai,https://*.anthropic.com,http://localhost:*
+EOF
+chmod 600 .env
 
-# --- JWT lifetime ---
-# Default is 24h. Bump to 30 days so you're not re-exchanging mid-session.
-TOKEN_LIFETIME_HOURS=720
+# 5. Bring it up
+docker compose up -d
 
-# --- CORS (allow local Claude Code + claude.ai) ---
-ALLOWED_ORIGINS=http://localhost:*,https://claude.ai,https://*.anthropic.com
-LOG_LEVEL=INFO
-```
+# 6. Wait for health
+for i in $(seq 1 30); do
+  if [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/health)" = "200" ]; then
+    echo "MCP healthy"; break
+  fi
+  sleep 5
+done
 
-Replace:
-- `YOUR_MANAGER_IP` → `terraform output -raw manager_public_ip`
-- `YOUR_WAZUH_WUI_PASSWORD` → from `.lab-credentials.txt` (the `wazuh-wui` block)
-- `YOUR_ADMIN_PASSWORD` → from `.lab-credentials.txt` (the `admin` block)
-- Both secret values from Step 2
-
-**Variable names that trip people up:**
-- `WAZUH_HOST` is a **full URL** (`https://...`), not just an IP.
-- `WAZUH_PASS` (NOT `WAZUH_PASSWORD`); `WAZUH_INDEXER_PASS` (NOT `WAZUH_INDEXER_PASSWORD`).
-- `WAZUH_VERIFY_SSL=false` **and** `WAZUH_ALLOW_SELF_SIGNED=true` — you need both for the lab's self-signed cert.
-
-## Step 4 — Start the server
-
-⚠️ **The server does NOT auto-load `.env`.** You must export the variables into the shell environment before running it. This is a known gotcha upstream.
-
-```bash
-# From inside the Wazuh-MCP-Server directory, with .venv active:
-set -a
-source .env
-set +a
-python -m wazuh_mcp_server
-```
-
-You should see:
-```
-INFO: Uvicorn running on http://127.0.0.1:3000
-```
-
-Verify it's healthy:
-```bash
-curl http://127.0.0.1:3000/health | python3 -m json.tool
-```
-
-All three services should show `"healthy"`:
-```json
-{
-  "services": {
-    "wazuh_manager": "healthy",
-    "wazuh_indexer": "healthy",
-    "mcp": "healthy"
-  }
-}
-```
-
-If manager is `"unhealthy"` or indexer is `"not_configured"` — the env vars didn't export. Re-run the `set -a` block.
-
-## Step 5 — Exchange API key for a JWT
-
-```bash
+# 7. Exchange API key for JWT
 JWT=$(curl -s -X POST http://127.0.0.1:3000/auth/token \
   -H "Content-Type: application/json" \
-  -d '{"api_key":"'"$MCP_API_KEY"'"}' \
-  | python3 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')
-echo "$JWT"
-```
+  -d "{\"api_key\":\"$MCP_API_KEY\"}" | jq -r '.access_token // .token')
 
-You get back a long `eyJ...` string. That's your bearer token for Claude Code.
-
-(If you skipped `set -a && source .env` in Step 4, substitute your actual `wazuh_...` key for `$MCP_API_KEY` above.)
-
-## Step 6 — Add Wazuh to Claude Code's `.mcp.json`
-
-In your ContextOS workspace `.mcp.json`:
-
-```json
+# 8. Write .mcp.json wherever you want Claude Code to find it
+cat > .mcp.json <<EOF
 {
   "mcpServers": {
     "wazuh": {
       "type": "http",
-      "url": "http://127.0.0.1:3000/mcp",
+      "url": "http://<your-mcp-host>:3000/mcp",
       "headers": {
-        "Authorization": "Bearer PASTE_YOUR_JWT_HERE"
+        "Authorization": "Bearer $JWT"
       }
     }
   }
 }
+EOF
+chmod 600 .mcp.json
 ```
 
-Three things that catch people:
-- The URL ends in `/mcp` — not `/`, not `/sse`.
-- Paste the full `eyJ...` JWT, not the `wazuh_...` API key.
-- Restart Claude Code after editing `.mcp.json`.
+### Production hardening (differences from our lab)
 
-## Step 7 — Verify in Claude Code
+Things this lab does for convenience that you would NOT do in production:
 
-After restarting Claude Code, ask:
+- **HTTP on :3000 exposed to your IP** — in prod, put this behind a reverse proxy with TLS, or expose it only via a VPN/bastion
+- **`WAZUH_VERIFY_SSL=false`** — replace the manager's self-signed cert with a real one from your internal CA and set `WAZUH_VERIFY_SSL=true`
+- **Clones from upstream `main`** — pin to a tagged release + commit hash, sign your container image
+- **24h JWT lifetime** — in prod, drop to 1-2h and script a refresh
+- **Full-access Wazuh API credentials** — create a scoped API user with only the permissions the MCP tools actually need (read + active-response, NOT user management or config writes)
+- **No audit logging** — add request logging on the MCP side so you can trace every tool call
 
-```
-Show me all connected Wazuh agents and their status.
-```
+These trade-offs are discussed in SKILL.md §9 (Lesson 3) — the security teaching is the point of the lesson, not an afterthought.
 
-You should see web-server-01, app-server-01, and dev-server-01 listed as Active. If you see them — you're connected.
+---
 
-## Running in the background
+## Why this is pre-installed
 
-For multi-day use:
+An earlier version of this lab had students install the MCP server themselves in Lesson 3. Lessons learned: the install is ~45 minutes of Docker + CORS + auth-flow configuration that is NOT the educational point. Students got frustrated, burned their time budget on ops work, and never got to the pedagogy (threat-modeling, prompt injection, natural-language investigation).
 
-```bash
-# From the Wazuh-MCP-Server directory, with .venv active and env exported:
-nohup python -m wazuh_mcp_server > ~/wazuh-mcp.log 2>&1 &
-```
-
-Stop with `pkill -f wazuh_mcp_server`. Check status: `lsof -i :3000`. Tail the log: `tail -f ~/wazuh-mcp.log`.
-
-## Refreshing the JWT
-
-With `TOKEN_LIFETIME_HOURS=720` your JWT is valid for 30 days. When it expires (or if you rotate the server's `AUTH_SECRET_KEY`), re-run Step 5 to get a new one, paste into `.mcp.json`, restart Claude Code.
-
-## What the MCP Server Can Do
-
-48 tools across these categories:
-
-**Investigation (read-only)**
-- `get_wazuh_alerts`, `get_wazuh_alert_summary`, `analyze_alert_patterns`, `search_security_events`
-- `get_wazuh_agents`, `check_agent_health`, `get_agent_processes`, `get_agent_ports`
-- `get_wazuh_vulnerabilities`, `get_critical_vulnerabilities`
-- `analyze_security_threat`, `perform_risk_assessment`, `get_top_security_threats`
-
-**Active response (requires `wazuh:write` scope — bearer mode gives it automatically)**
-- `wazuh_block_ip`, `wazuh_isolate_host`, `wazuh_kill_process`, `wazuh_quarantine_file`, `wazuh_disable_user`
-- Verification: `wazuh_check_blocked_ip`, `wazuh_check_agent_isolation`, `wazuh_check_process`
-- Rollback: `wazuh_unisolate_host`, `wazuh_enable_user`, `wazuh_restore_file`, `wazuh_firewall_allow`
-
-**Reports + compliance**
-- `generate_security_report`, `run_compliance_check` (PCI-DSS, HIPAA, NIST, GDPR)
-- `get_wazuh_cluster_health`, `get_wazuh_rules_summary`, `search_wazuh_manager_logs`
-
-## What It Cannot Do
-
-- Create or modify Wazuh detection rules (use rule XML + `wazuh-logtest` — covered in Lesson 5)
-- Query external threat intel (the `check_ioc_reputation` tool searches your own Wazuh history, not VirusTotal/AbuseIPDB)
-- Modify agent configuration or enroll new agents
-
-## Known upstream issue (v4.2.1) — active response rollback
-
-**`wazuh_firewall_allow` doesn't reliably remove the iptables rule.** Upstream's rollback path expects the Wazuh manager to time out the block based on ossec.conf's `<timeout>` value, not to receive an explicit delete command. When the MCP tool is called to unblock, the agent-side `firewall-drop` binary often adds a duplicate rule instead of removing the original.
-
-**Recommended workaround — use duration-based blocks:**
-
-Always call `wazuh_block_ip` with a `duration` parameter (seconds):
-
-```
-Block 192.0.2.99 on web-server-01 for 300 seconds.
-```
-
-After 300s, Wazuh's timeout mechanism removes the block automatically. This is also the production pattern — humans shouldn't be manually unblocking IPs; the SIEM's timeout + re-evaluation handles it.
-
-**If you need to unblock before the timeout expires,** SSH to the agent:
-
-```bash
-ssh ubuntu@<agent-ip> 'sudo iptables -D INPUT -s <blocked-ip> -j DROP'
-```
-
-Course Lesson 5 Part 2 teaches both patterns.
-
-## Troubleshooting
-
-**"Invalid or expired token" on /mcp:**
-- You're sending the `wazuh_...` API key as the bearer. You need the JWT. Re-run Step 5.
-- Your JWT expired. Re-run Step 5.
-- Server's `AUTH_SECRET_KEY` changed. Restart the server (re-export env), then re-run Step 5.
-
-**"Connection refused" from Claude Code:**
-- MCP server isn't running. Check: `curl http://localhost:3000/health`.
-- Port 3000 is in use: `lsof -i :3000`.
-
-**Health endpoint shows `wazuh_manager: unhealthy`:**
-- `.env` wasn't exported. Kill the server, re-run `set -a && source .env && set +a && python -m wazuh_mcp_server`.
-- `WAZUH_HOST` doesn't include `https://` prefix.
-- `WAZUH_PASS` is wrong (check `.lab-credentials.txt`).
-
-**Health endpoint shows `wazuh_indexer: not_configured`:**
-- `WAZUH_INDEXER_HOST` wasn't exported (same `.env` issue as above).
-- Value missing entirely (check `.env`).
-
-**Indexer tools return empty / "connection refused" to :9200:**
-- Run `doctor.sh`. If indexer check fails, network.host binding issue on the manager. Should be fixed automatically by bootstrap, but if not, SSH to the manager and run: `sudo sed -i 's/^network.host: .*/network.host: "0.0.0.0"/' /etc/wazuh-indexer/opensearch.yml && sudo systemctl restart wazuh-indexer`.
-
-**"Tool execution error" in server log:**
-- Circuit breaker opens after 5 consecutive failures — wait 60s and retry.
-- Check `~/wazuh-mcp.log` for the specific Wazuh API error.
-
-**"No module named wazuh_mcp_server" when you try to start the server:**
-- The editable install didn't persist (happens after `--force-reinstall --no-deps` or venv reuse). From the Wazuh-MCP-Server directory with the venv active: `pip install -e .`. Then start the server again.
+Moving the install to bootstrap gives students the payoff with zero ops drudgery. The security teaching — the thing that actually matters — stays front and center in Lesson 3 where it belongs.

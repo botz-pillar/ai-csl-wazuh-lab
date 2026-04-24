@@ -1,68 +1,90 @@
-# AI Cloud Security Lab — Course 3: Deploy Wazuh + AI
+# AI Cloud Security Lab — Course 3: Wazuh SIEM + AI-augmented SOC
 
-> This repo is the infrastructure for Course 3 of the AI Cloud Security Lab (AI-CSL) curriculum, hosted on Skool. The Skool course is the canonical source of lesson content, prompts, and sequencing. This document gives Claude Code (and any other AI assistant helping a student) enough context to guide them through the lab correctly.
+> Course context for any AI assistant helping with this repo. The primary teaching surface is `.claude/skills/course-3-instructor/SKILL.md` (the Mateo persona) which auto-loads in Claude Code. This file is a cold-start map for assistants that don't load that skill.
 
 ---
 
 ## Where the course lives
 
-**Primary:** [AI Cloud Security Lab on Skool](https://www.skool.com/cloud-security-lab) — Classroom → Course 3.
+**The course is the repo.** Students clone this repo, launch Claude Code, and tell it "I'm starting Course 3." The course-3-instructor skill activates Mateo (a senior-SOC-analyst persona), who guides the student through all six lessons end-to-end.
 
-This GitHub repo contains only the infrastructure (Terraform, user_data scripts, MCP helpers). It does not contain the lesson text itself.
+Skool is the front door — landing page, outline, help-question channel, community. It does NOT hold the lesson content. Don't refer students back to Skool lessons; they don't exist there.
 
-**If a student asks "what is Course 3 / Lesson 2 / Lab A?" don't push back saying they don't exist.** They exist in Skool. Acknowledge and help the student with the hands-on work their lesson is asking them to do.
+**If a student asks something the skill file doesn't cover:** read `.claude/skills/course-3-instructor/SKILL.md` — that's the source of truth.
 
 ---
 
 ## Course structure
 
-Course 3 has **6 core lessons + 5 optional labs**.
+Course 3 has **6 core lessons** that run as one ~2-hour continuous session, plus **5 optional modular labs** (paid add-ons) that use the same deployed lab.
 
-### Core curriculum
+### Narrative frame (critical — do not break)
 
-| # | Lesson | What the student does in this repo |
-|---|--------|-------------------------------------|
-| 1 | 🛡️ Deploy CloudVault's SIEM | Clones this repo, edits `terraform/terraform.tfvars`, runs `./scripts/bootstrap.sh`, then `./scripts/doctor.sh`. Spends Step 6 on a dashboard tour and Step 7 exploring what Wazuh found automatically (SCA, vulns, FIM). |
-| 2 | 🎯 Simulate Attacks + Investigate Manually | SSHes to dev-server-01 and runs `sudo bash /home/ubuntu/generate-events.sh`. Investigates the resulting alerts in the Wazuh dashboard **manually** (no AI), following an 9-step DQL click-path. Times themselves. |
-| 3 | 🔗 Connect the MCP Server + AI Investigation | Sets up [gensecaihq/Wazuh-MCP-Server](https://github.com/gensecaihq/Wazuh-MCP-Server), connects it to Claude Code via `.mcp.json`, re-investigates the same alerts with AI. Times the comparison. Generates an executive report for "Dana" (fictional CISO). |
-| 4 | 🎯 Threat Hunting + AI That's Wrong | Runs 4 proactive hunts (processes, ports, persistence artifacts, user anomalies) through MCP. Practices verifying AI claims against raw data. Picks 5 prompts to save for real SOC work. |
-| 5 | ⚡ Detection Engineering + Active Response | Reads a Rule Syntax Primer (OSSEC regex, `<if_sid>` vs `<if_group>`, levels). Writes custom detection rule 100001 for CloudVault-specific FIM-rate patterns. Uses MCP to block/unblock IPs with duration-based active response. |
-| 6 | 🧹 Clean Up + Portfolio | Writes a Project Card + reflections for interview stories. Points at the 5 labs. Destroys the lab with `terraform destroy`. |
+Course 3 is a continuation of the CloudVault Financial arc from Courses 1-2. The student is CloudVault's security lead (from C1-C2). **Mateo is a senior SOC analyst brought in by Dana (CISO) after the contractor breach in C2.** He is a peer, not an instructor — never references "Course 3," "Lesson N," "the exercise," or "the simulation" to the student.
 
-### Optional labs (career-path oriented)
+**The investigation spine:** the contractor IR from Course 2 flagged three suspected persistence mechanisms (account, network listener, scheduler) that were never confirmed eliminated. Wazuh is being stood up now both to answer "are they still in?" and to provide SOC 2 evidence before the audit. Every phase serves that spine.
 
-Located in the main AI-CSL `shared-context` repo at `curriculum/courses/03-lab-wazuh-labs/`. Each uses this same Wazuh deployment via `start-lab.sh` / `stop-lab.sh`:
+### Core arc (in SKILL.md §7–§12)
 
-- **Lab A — Custom Decoder Deep Dive** (Detection Engineering): 3 custom decoders + rules for CloudVault API, nginx access log, sudo allow-list inversion
-- **Lab B — SOC 2 Evidence Package** (GRC/Audit): Auditor-grade evidence for CC7.2, CC6.1, CC7.1
+| # | Phase | What happens |
+|---|-------|--------------|
+| 1 | 🛡️ Stand up the SIEM | Student clones the repo, edits `tfvars`, runs `./scripts/bootstrap.sh`. Mateo briefs the case, walks Terraform / Wazuh architecture / MCP preview / dashboard during the ~20-min install wait. Login, dashboard tour, first reverse-prompt cycle, SCA + vuln exploration. |
+| 2 | 🎯 Baseline the environment | SSH to dev-server-01, run `sudo bash /home/ubuntu/generate-events.sh` (4 MITRE-mapped TTPs matching the IR report's pattern classes). Investigate manually. Confirm SIEM coverage before hunting. First update to Dana. |
+| 3 | 🔗 Threat-model the MCP + plug it in | MCP is pre-installed by user_data + auto-wired into `.mcp.json` by bootstrap.sh. Student inspects what's running, threat-models it (stolen JWT / prompt injection / supply chain), re-runs the baseline investigation via natural language. Verification-as-reflex practice. |
+| 4 | 🎯 The backdoor hunt | Four structured hunts against the three persistence categories from the IR report (account, listener, scheduler) plus an AI-verification drill. Hypothesis / query / disposition framing → hunt log → SOC 2 evidence. |
+| 5 | ⚡ Tripwires and response | Rule-syntax primer against a real Wazuh default. Student writes rule 100001 (CloudVault client-data tripwire Dana asked for), validates with `wazuh-logtest`, deploys, triggers, verifies firing via MCP. Duration-based active response (anti-`wazuh_firewall_allow` quirk). |
+| 6 | 🧹 Close the case | Compressed IR on a fresh alert (brute-force on web-server-01). Evidence package for Dana + SOC 2 (CC7.1 / CC7.2). Personal artifact for interviews. `terraform destroy` with verification. |
+
+### Optional paid labs (career-path oriented)
+
+Not in this repo — sold as modular add-ons post-launch. Each uses the same core lab deploy:
+
+- **Lab A — AWS Log Connection** (Cloud Detection Engineer): ingest CloudTrail + VPC Flow Logs + GuardDuty into Wazuh, write detection rules on real AWS log shapes
+- **Lab B — SOC 2 Evidence Package** (GRC/Audit): auditor-grade evidence for CC7.2, CC6.1, CC7.1
 - **Lab C — Threat Hunting Playbook** (SOC Analyst): 10 hunts with dispositions and detection-gap recommendations
 - **Lab D — Automated Incident Response** (SOAR/Platform Sec): 1 full auto-chain + 2 MCP-driven playbooks
 - **Lab E — Vulnerability Management Workflow** (SRE w/ security scope): 4-axis triage + live-validated remediation
 
----
-
-## Fictional scenario: CloudVault Financial
-
-The lab runs against a fictional wealth-management firm. Context lives in:
-- `contextOS-personal/lab-data/cloudvault-financial/` (public repo, submodule) — company profile, CloudTrail dataset, answer key
-- This repo's `terraform/user_data/` — deploys a web-server-01 (nginx+TLS CloudVault portal), app-server-01 (Python API `/health` + `/api/accounts`), dev-server-01 (dev workstation), all monitored by Wazuh
-
-**The Wazuh lab is the live infrastructure.** The `cloudvault-financial/` dataset is separate static training data used in Courses 1-2. Don't conflate them.
+**If a student asks about a paid lab before purchase:** acknowledge it exists as a paid add-on, don't pretend to run it. Direct them to the Skool upgrade path.
 
 ---
 
-## Quick reference for Claude Code
+## Fictional company: CloudVault Financial (canon across C1-C3)
 
-When a student asks about something Course 3 promises but you don't see evidence of:
+Mid-size wealth-management firm, **200 employees, $2.1B AUM, Austin**. **Dana Chen is CISO**, not IT director — she hired the student (the security lead) before Course 1. Marcus Webb = junior analyst. Priya Sharma = DevOps lead. Mateo joined as a short-engagement senior peer after the Course 2 contractor breach.
 
-1. **"Has the student actually run the generator on the agent?"** — The course instructs SSH into dev-server-01 and run `sudo bash /home/ubuntu/generate-events.sh`. If there are no alerts, they probably haven't run it yet. Check the dashboard or `get_wazuh_alerts` MCP tool for recent events from dev-server-01.
-2. **"The script on the agent is the source of truth"** — not any file in `scripts/` of this repo. The file at `/home/ubuntu/generate-events.sh` on each agent is what actually runs. `scripts/agent-events-generator.sh` in this repo is just the source — it's deployed verbatim via Terraform user_data base64.
-3. **"CloudVault paths on the agents"** — `/opt/cloudvault/client-data/`, `/opt/cloudvault/financial-records/`, `/opt/cloudvault/config/`. These are real directories on the Wazuh agents, monitored by FIM in realtime. Scenario 2 in the generator modifies files there.
-4. **"Filter syntax"** — Wazuh 4.9 dashboard uses DQL by default (`rule.level >= 5 and agent.name : "dev-server-01"`), not Lucene (`rule.level:>=5`). If the student hits "Expected value" syntax errors, it's DQL vs Lucene.
-5. **"Expected false positives"** — Rule 510 on `/bin/diff` fires routinely as a known Wazuh rootcheck FP. Don't escalate it; document and move on.
+**What happened in Courses 1-2 that Course 3 continues from:** a compromised contractor account escalated via `sts:AssumeRole`, exfiltrated client documents, and attempted CloudTrail cover-up (C2's 28-event attack chain). The IR report flagged three suspected persistence mechanisms the attacker may have left — account, network listener, scheduler — none definitively eliminated. SOC 2 Type II audit ~6 weeks out; evidence collection drives the urgency.
+
+- **Three servers deployed:** `web-server-01` (nginx+TLS portal), `app-server-01` (Python API `/health` + `/api/accounts`), `dev-server-01` (dev workstation + attack launch point)
+- **Wazuh manager + 3 agents**, all monitored by FIM, SCA, rootcheck, vulnerability detection
+- **CloudVault paths on agents** (monitored by FIM in realtime): `/opt/cloudvault/client-data/`, `/opt/cloudvault/financial-records/`, `/opt/cloudvault/config/`
+
+---
+
+## Architecture facts any assistant should know
+
+- **Static private IPs** — manager `10.0.1.10`, web `10.0.1.20`, app `10.0.1.30`, dev `10.0.1.40`. Mappings live in `/etc/hosts` on each agent.
+- **MCP server** — pre-installed on the manager by `terraform/user_data/wazuh_manager.sh`. Docker container listens on port 3000 with bearer auth. `bootstrap.sh` fetches the JWT and writes `.mcp.json` in the repo root.
+- **Attack generator** — `scripts/agent-events-generator.sh` is the source. It's deployed to `/home/ubuntu/generate-events.sh` on each agent via user_data base64 encode. The agent copy is what actually runs.
+- **Credentials** — `.lab-credentials.txt` (gitignored, written by bootstrap.sh from the install tarball). `.mcp.json` (gitignored, written by bootstrap.sh from MCP /auth/token exchange).
+- **Idempotency** — `bootstrap.sh` is re-runnable; re-running fetches fresh credentials and re-writes `.mcp.json`. `terraform apply` is idempotent.
+
+---
+
+## Quick reference for AI assistants in this repo
+
+1. **"Has the student run the generator yet?"** — Check the indexer for recent alerts from dev-server-01 via the MCP (`get_alerts` with `agent.name:"dev-server-01"`, last 15 min). If empty, they haven't run it. Path on the agent: `/home/ubuntu/generate-events.sh`.
+2. **"MCP isn't connected" in Claude Code** — Restart Claude Code (it only reads `.mcp.json` at launch). If still broken: JWT may have expired (24h default) — re-run `bootstrap.sh` or its MCP-wiring section.
+3. **"Filter syntax in the dashboard"** — Wazuh 4.9 defaults to DQL (`rule.level >= 5 and agent.name : "dev-server-01"`), NOT the old Lucene syntax (`rule.level:>=5`). If the student sees "Expected value" syntax errors, it's DQL vs Lucene.
+4. **"Dashboard menu paths"** — Wazuh 4.9 renamed things vs older docs. See SKILL.md §5 Block 6 for the authoritative map (`☰ → Threat intelligence → Threat Hunting` is home base for alerts, not the old "Modules → Security Events").
+5. **"Expected false positives"** — Rule 510 on `/bin/diff` is a known Wazuh rootcheck FP. Document and ignore.
 
 ---
 
 ## Contributing / feedback
 
-This lab is actively developed. File issues or PRs against this repo for infrastructure bugs. For course content feedback (lesson text, prompts, pedagogy), use the Skool classroom comments — course text is maintained in a separate (private) curriculum repo.
+- **Infrastructure bugs** (Terraform, user_data, bootstrap, MCP install): GitHub Issue + PR
+- **Course content** (Mateo voice, lesson pedagogy): GitHub Issue + PR against SKILL.md
+- **Upstream Wazuh / MCP issues**: upstream to gensecaihq/Wazuh-MCP-Server or wazuh/wazuh
+
+MIT licensed — use in training, workshops, demos. Attribution appreciated.
