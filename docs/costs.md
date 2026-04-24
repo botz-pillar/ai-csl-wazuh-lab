@@ -6,49 +6,59 @@ This lab is designed to be cheap to run. Here's exactly what you'll pay.
 
 | Resource | Type | Hourly Cost |
 |----------|------|-------------|
-| Wazuh Manager | t3.medium (2 vCPU, 4GB RAM) | $0.0416 |
-| Wazuh Agent | t3.micro (2 vCPU, 1GB RAM) | $0.0104 |
+| Wazuh Manager (includes MCP server container) | t3.large (2 vCPU, 8GB RAM) | $0.0832 |
+| Wazuh Agents (×3) | t3.micro each (2 vCPU, 1GB RAM) | $0.0312 |
 | EBS (Manager) | 30GB gp3 | ~$0.003* |
-| EBS (Agent) | 20GB gp3 | ~$0.002* |
+| EBS (Agents ×3) | 20GB gp3 each | ~$0.008* |
 | Elastic IP | Attached to running instance | $0.00 |
-| **Total** | | **~$0.056/hr** |
+| **Total** | | **~$0.126/hr** |
 
 *EBS is billed monthly but shown as hourly equivalent for comparison.
+
+**Why t3.large for the manager?** The Wazuh manager + indexer + dashboard alone uses ~2 GB RAM. Adding the Docker-based MCP server uses another ~300-500 MB. On t3.medium (4 GB), the MCP install would put memory pressure high enough to risk OOM kills on the indexer. t3.large (8 GB) has plenty of headroom and doubles the manager cost from $0.042 to $0.083/hr — worth it for reliability.
 
 Prices are for us-east-1. Other regions may vary slightly.
 
 ## Scenario Costs
 
-### Weekend Lab (48 hours)
-
-The typical use case — deploy Friday evening, learn over the weekend, destroy Sunday night.
+### Typical 2-hour session (course target)
 
 | Resource | Cost |
 |----------|------|
-| Manager compute (48h) | $2.00 |
-| Agent compute (48h) | $0.50 |
+| Manager compute (2h) | $0.17 |
+| Agents compute (2h) | $0.06 |
+| EBS storage (2h) | $0.02 |
+| Data transfer (minimal) | ~$0.01 |
+| **Total** | **~$0.26** |
+
+### Weekend Lab (48 hours, forgot to destroy)
+
+| Resource | Cost |
+|----------|------|
+| Manager compute (48h) | $3.99 |
+| Agents compute (48h) | $1.50 |
 | EBS storage (50GB, 2 days) | $0.27 |
 | Data transfer (minimal) | ~$0.10 |
-| **Total** | **~$2.87** |
+| **Total** | **~$5.86** |
 
-### One Week
+### One Week (forgot about it entirely)
 
 | Resource | Cost |
 |----------|------|
-| Manager compute (168h) | $6.99 |
-| Agent compute (168h) | $1.75 |
+| Manager compute (168h) | $13.98 |
+| Agents compute (168h) | $5.25 |
 | EBS storage (50GB, 7 days) | $0.93 |
-| **Total** | **~$9.67** |
+| **Total** | **~$20.16** |
 
-### One Month (Running Continuously)
+### One Month (Running Continuously — DON'T DO THIS)
 
 | Resource | Cost |
 |----------|------|
-| Manager compute (730h) | $30.37 |
-| Agent compute (730h) | $7.59 |
+| Manager compute (730h) | $60.74 |
+| Agents compute (730h) | $22.78 |
 | EBS storage (50GB) | $4.00 |
 | Elastic IP | $0.00 |
-| **Total** | **~$41.96** |
+| **Total** | **~$87.52** |
 
 ### Stopped (Storage Only)
 

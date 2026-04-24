@@ -209,6 +209,34 @@ if [ -f "$CREDS_FILE" ] && [ -n "${TOKEN:-}" ]; then
   fi
 fi
 
+# --- 11. MCP server ---
+section "MCP Server (Wazuh-MCP-Server)"
+MCP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://$MANAGER_IP:3000/health" 2>/dev/null || echo "000")
+if [ "$MCP_CODE" = "200" ]; then
+  pass "MCP /health responding HTTP 200 on :3000"
+
+  # Verify .mcp.json locally
+  MCP_JSON="$REPO_ROOT/.mcp.json"
+  if [ -f "$MCP_JSON" ]; then
+    pass ".mcp.json present at repo root"
+    # Check the URL in .mcp.json points at the right manager IP
+    if grep -q "$MANAGER_IP" "$MCP_JSON"; then
+      pass ".mcp.json URL points at current manager ($MANAGER_IP)"
+    else
+      warn ".mcp.json URL doesn't match current manager IP — re-run bootstrap.sh to refresh"
+    fi
+  else
+    warn ".mcp.json missing at repo root — re-run bootstrap.sh to write it"
+    info "  Or see docs/mcp-server-setup.md for manual setup"
+  fi
+elif [ "$MCP_CODE" = "000" ]; then
+  fail "MCP /health not reachable on :3000"
+  info "  Check SG has port 3000 open from your IP (tfvars your_ip_cidr)"
+  info "  Check container is running: ssh ubuntu@$MANAGER_IP 'sudo docker ps | grep wazuh-mcp'"
+else
+  warn "MCP /health returned HTTP $MCP_CODE (expected 200)"
+fi
+
 # --- Summary ---
 echo ""
 echo -e "${BOLD}Summary:${NC} ${GREEN}$PASS passed${NC}, ${RED}$FAILS failed${NC}, ${YELLOW}$WARNS warnings${NC}"
