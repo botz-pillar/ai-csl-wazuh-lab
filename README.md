@@ -1,6 +1,6 @@
 # AI Cloud Security Lab — Course 3: Wazuh SIEM + AI-augmented SOC
 
-> 🧪 **Beta.** This lab is open for beta runs. If anything breaks, feels off, or just confuses you — I want to hear about it. Three feedback paths: the `#Build Questions` channel in the [AI-CSL Skool community](https://skool.com/ai-csl), a DM to Josh directly there, or [open a GitHub issue](https://github.com/botz-pillar/ai-csl-wazuh-lab/issues/new/choose). No feedback is too small.
+> 🧪 **Beta.** This lab is open for beta runs. If anything breaks, feels off, or just confuses you — I want to hear about it. Three feedback paths: the `#Build Questions` channel in the [AI-CSL Skool community](https://skool.com/cloud-security-lab), a DM to Josh directly there, or [open a GitHub issue](https://github.com/botz-pillar/ai-csl-wazuh-lab/issues/new/choose). No feedback is too small.
 
 **CloudVault Financial was breached. You ran the IR. The remediation looks clean, but three persistence categories from your report were never confirmed eliminated — and SOC 2 evidence collection starts in a few weeks. Dana brought in a senior SOC peer (Mateo) to help you stand up a SIEM, baseline the environment, hunt for what's left behind, and produce the evidence package.**
 
