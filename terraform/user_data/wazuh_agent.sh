@@ -11,6 +11,21 @@ MANAGER_IP="${manager_ip}"
 AGENT_NAME="${agent_name}"
 WAZUH_VERSION="${wazuh_version}"
 
+# --- Populate /etc/hosts for inter-agent hostname resolution ---
+# Fixes v4's TARGET_IP hardcoding bug: the generator can now use hostnames
+# (web-server-01, app-server-01, dev-server-01) instead of hardcoded IPs.
+# Mirrors how a production network would use internal DNS.
+echo "=== Writing /etc/hosts entries for CloudVault agents + manager ==="
+cat >> /etc/hosts << HOSTSEOF
+
+# AI-CSL CloudVault lab — static inter-agent hostname mappings
+${web_server_ip}  web-server-01
+${app_server_ip}  app-server-01
+${dev_server_ip}  dev-server-01
+${manager_ip}     wazuh-manager
+HOSTSEOF
+echo "=== /etc/hosts now has CloudVault entries ==="
+
 # Wait for apt to be available. Note: we don't use `cloud-init status --wait`
 # here because THIS script IS cloud-init's final stage — calling that command
 # would deadlock (wait for yourself to finish).

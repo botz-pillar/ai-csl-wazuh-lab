@@ -32,8 +32,8 @@ read -p "Press Enter to start scenario 1, or Ctrl+C to cancel..."
 echo ""
 echo "--- [1/4] SSH brute force ---"
 echo "What this does: generates 15 failed SSH login attempts from this agent"
-echo "AGAINST web-server-01 (10.0.1.12). The source IP for each attempt will"
-echo "be this agent's private IP (10.0.1.x), NOT 127.0.0.1."
+echo "AGAINST web-server-01. The source IP for each attempt will be this"
+echo "agent's private IP (10.0.1.x), NOT 127.0.0.1."
 echo ""
 echo "How Wazuh detects it: sshd on web-server-01 writes each failure to"
 echo "/var/log/auth.log. Wazuh fires rule 5710 (invalid user), then after"
@@ -44,13 +44,27 @@ echo "5712 will fire — web-server-01 will auto-add an iptables DROP for"
 echo "this agent's IP for 300 seconds."
 echo ""
 
-# Always target web-server-01 by its stable private IP. If we ARE web-server-01
-# (unlikely — attack sim is meant for dev-server-01) we'd fall back to localhost.
-TARGET_IP="10.0.1.12"
+# Resolve target via /etc/hosts (populated by Terraform user_data with static
+# IPs). This avoids the v4 bug where TARGET_IP was hardcoded to 10.0.1.12 but
+# the actual deploy used a different IP — SSH packets went to a non-existent
+# host and nothing fired.
+TARGET="web-server-01"
+TARGET_IP=$(getent hosts "$TARGET" 2>/dev/null | awk '{print $1}')
 MY_IP=$(hostname -I | awk '{print $1}')
+
+if [ -z "$TARGET_IP" ]; then
+  echo "[ERROR] Can't resolve '$TARGET' — /etc/hosts may not have been populated"
+  echo "        by Terraform user_data. Check /etc/hosts and re-run, or manually"
+  echo "        set TARGET_IP in this script."
+  echo ""
+  echo "Current /etc/hosts entries:"
+  grep -E "^[0-9]" /etc/hosts | head -10
+  exit 1
+fi
+
 if [ "$MY_IP" = "$TARGET_IP" ]; then
+  echo "(running on $TARGET itself — falling back to localhost for this scenario)"
   TARGET_IP="127.0.0.1"
-  echo "(running on web-server-01 itself, falling back to localhost)"
 fi
 
 for i in $(seq 1 15); do
@@ -58,10 +72,10 @@ for i in $(seq 1 15); do
     -o UserKnownHostsFile=/dev/null -o ConnectTimeout=2 \
     -o PreferredAuthentications=password -o PubkeyAuthentication=no \
     "fakeuser$i@$TARGET_IP" exit 2>/dev/null || true
-  echo "  Attempt $i/15 (source=$MY_IP dst=$TARGET_IP user=fakeuser$i)"
+  echo "  Attempt $i/15 (source=$MY_IP dst=$TARGET_IP [$TARGET] user=fakeuser$i)"
   sleep 0.5
 done
-echo "[DONE] 15 failed SSH attempts sent from $MY_IP → $TARGET_IP"
+echo "[DONE] 15 failed SSH attempts sent from $MY_IP → $TARGET_IP ($TARGET)"
 echo ""
 echo "After detection, check iptables on web-server-01 (expect DROP for $MY_IP)."
 
