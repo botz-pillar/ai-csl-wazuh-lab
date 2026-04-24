@@ -209,7 +209,7 @@ docker compose up -d
 echo "=== MCP install: waiting for /health ==="
 MCP_READY=0
 for i in $(seq 1 30); do
-  CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/health 2>/dev/null || echo "000")
+  CODE=$(curl -s -o /dev/null -w "%%{http_code}" http://127.0.0.1:3000/health 2>/dev/null || echo "000")
   if [ "$${CODE}" = "200" ]; then
     echo "MCP /health responding 200 after $${i}x5s"
     MCP_READY=1
