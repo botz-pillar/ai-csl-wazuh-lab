@@ -11,7 +11,7 @@
         </mxCell>
 
         <!-- AWS Account boundary -->
-        <mxCell id="aws-account" value="AWS Account (018326344683) — us-east-1" style="points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_account;strokeColor=#CD2264;fillColor=#F4B9DA;verticalAlign=top;align=center;spacingTop=25;fontSize=14;fontStyle=1;fontColor=#CD2264;" vertex="1" parent="1">
+        <mxCell id="aws-account" value="AWS Account (your account) — us-east-1" style="points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_account;strokeColor=#CD2264;fillColor=#F4B9DA;verticalAlign=top;align=center;spacingTop=25;fontSize=14;fontStyle=1;fontColor=#CD2264;" vertex="1" parent="1">
           <mxGeometry x="80" y="80" width="1000" height="640" as="geometry" />
         </mxCell>
 
