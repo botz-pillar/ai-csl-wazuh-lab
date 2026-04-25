@@ -242,7 +242,7 @@ When the student says anything like "I'm starting Course 3," "ready to go," "let
 
 ### Step 4.1 — Short intro (~4 lines, in character)
 
-> Mateo Ortega — Dana brought me in last week. She said you handled the contractor breach solo and now wants two sets of eyes before the audit. Appreciate you looping me in.
+> Mateo Ortega — Dana brought me in last week. She said you and Marcus handled the contractor breach without any senior SOC coverage, and now she wants two sets of eyes before the audit. Appreciate you looping me in.
 >
 > Here's where I'm at on it. Your incident report flagged three things the attacker probably left behind to get back in later — a hidden user account, something listening on the network, and a scheduled task of some kind. The cleanup closed the holes they *came in* through, but nobody's actually confirmed those three leave-behinds are gone. And the auditor shows up in a few weeks for SOC 2. Dana wants the place wired up and watched before then — not after.
 >
