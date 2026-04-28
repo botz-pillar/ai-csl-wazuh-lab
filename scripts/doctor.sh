@@ -80,13 +80,15 @@ if [ ! -d "$TF_DIR" ]; then
 fi
 
 cd "$TF_DIR"
-if [ ! -f "terraform.tfstate" ]; then
-  warn "No terraform.tfstate — lab not deployed yet? Run: ./scripts/bootstrap.sh"
+# State lives in S3 (configured in backend.tf + backend.hcl). Probe via
+# `terraform output` which fails fast if state is empty or backend uninitialized.
+if ! terraform output -raw manager_public_ip >/dev/null 2>&1; then
+  warn "No Terraform state found — lab not deployed yet? Run: ./scripts/bootstrap.sh"
   echo ""
   echo "Summary: $PASS passed, $FAILS failed, $WARNS warnings"
   exit 1
 fi
-pass "Terraform state found"
+pass "Terraform state found (S3 backend)"
 
 # --- 4. Get manager IP ---
 MANAGER_IP=$(terraform output -raw manager_public_ip 2>/dev/null || echo "")

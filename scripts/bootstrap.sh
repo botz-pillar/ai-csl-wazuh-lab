@@ -66,11 +66,22 @@ if [ ! -f "$TF_DIR/terraform.tfvars" ]; then
 fi
 success "terraform.tfvars configured"
 
+# --- Terraform state backend (S3 + DynamoDB lock) ---
+# Codespaces are ephemeral; local terraform.tfstate would disappear on rebuild.
+# bootstrap-tfstate.sh creates the bucket + table and writes terraform/backend.hcl.
+# Idempotent — skips resources that already exist.
+if [ ! -f "$TF_DIR/backend.hcl" ]; then
+  echo ""
+  info "First run — bootstrapping S3 state backend..."
+  "$SCRIPT_DIR/bootstrap-tfstate.sh"
+  success "State backend ready"
+fi
+
 # --- Terraform apply ---
 echo ""
 info "Running terraform init..."
 cd "$TF_DIR"
-terraform init -upgrade >/dev/null
+terraform init -upgrade -backend-config=backend.hcl >/dev/null
 success "Terraform initialized"
 
 info "Running terraform apply (this takes ~1-2 minutes)..."
