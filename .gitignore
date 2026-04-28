@@ -5,6 +5,7 @@ terraform/terraform.tfstate
 terraform/terraform.tfstate.backup
 terraform/terraform.tfvars
 terraform/.terraform.tfstate.lock.info
+terraform/backend.hcl
 
 # OS
 .DS_Store
