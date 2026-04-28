@@ -27,6 +27,10 @@ Six phases of the investigation, one continuous ~2-hour session:
 
 ## Quick start
 
+**Two paths.** Local install is the default. Codespaces is there if you can't (or don't want to) install the toolchain on your machine — school computer, work laptop, hostile environment.
+
+### Path A — Local (default)
+
 **Prerequisites** (5 min): AWS account + CLI configured, Terraform ≥ 1.5, an EC2 key pair in your target region, [Claude Code](https://docs.claude.com/claude-code) CLI. Full checklist below.
 
 ```bash
@@ -38,7 +42,7 @@ cd ai-csl-wazuh-lab
 cp terraform/terraform.tfvars.example terraform/terraform.tfvars
 $EDITOR terraform/terraform.tfvars
 
-# 3. Deploy (one command — Terraform + Wazuh install + MCP install + .mcp.json)
+# 3. Deploy (one command — bootstraps S3 state, Terraform, Wazuh, MCP, .mcp.json)
 ./scripts/bootstrap.sh
 
 # 4. Launch Claude Code in the lab directory
@@ -47,6 +51,15 @@ claude
 # 5. Tell Mateo you're starting
 # > I'm starting Course 3
 ```
+
+### Path B — Codespaces (no local install)
+
+GitHub Codespaces gives you a pre-built environment with Terraform, AWS CLI, Docker, and Claude Code already installed.
+
+1. **Add AWS keys to Codespaces user secrets** at <https://github.com/settings/codespaces>. Set `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (use the lab IAM user — see [docs/IAM-LAB-POLICY.md](docs/IAM-LAB-POLICY.md)). Scope them to this repo.
+2. **Launch the Codespace** — green Code button on this repo → **Codespaces** tab → **Create codespace on main**. ~2 min to build.
+3. **Inside the Codespace**, follow steps 2-5 from Path A. The `bootstrap.sh` script handles S3 state automatically — Codespaces are ephemeral, so state lives in S3, not on the container.
+4. **Dashboard access:** the Codespace forwards port 443 (Wazuh dashboard) and 3000 (MCP) via SSH tunnels to the manager. Mateo will walk you through the tunnel command when you reach Lesson 1.
 
 Mateo takes it from there. Total deploy time ~20-25 min (Terraform is ~2 min, Wazuh install is ~15 min, MCP install is ~3 min, agent registration is ~5 min — mostly parallel). Mateo teaches during the wait so there's no dead time.
 
