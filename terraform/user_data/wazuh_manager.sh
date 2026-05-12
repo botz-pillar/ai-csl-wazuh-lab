@@ -105,15 +105,7 @@ fi
 # regardless of how many times user_data executes.
 echo "=== Installing automatic active-response triggers (idempotent) ==="
 sed -i '/<!-- AI-CSL:auto-AR -->/,/<!-- AI-CSL:auto-AR-end -->/d' /var/ossec/etc/ossec.conf
-sed -i '0,/<\/ossec_config>/{s|<\/ossec_config>|<!-- AI-CSL:auto-AR -->\
-<active-response>\
-  <command>firewall-drop</command>\
-  <location>local</location>\
-  <rules_id>5712,5720</rules_id>\
-  <timeout>300</timeout>\
-</active-response>\
-<!-- AI-CSL:auto-AR-end -->\
-</ossec_config>|}' /var/ossec/etc/ossec.conf
+sed -i '0,/<\/ossec_config>/{s|<\/ossec_config>|<!-- AI-CSL:auto-AR -->\\n<active-response>\\n  <command>firewall-drop</command>\\n  <location>local</location>\\n  <rules_id>5712,5720</rules_id>\\n  <timeout>300</timeout>\\n</active-response>\\n<!-- AI-CSL:auto-AR-end -->\\n</ossec_config>|}' /var/ossec/etc/ossec.conf
 
 # Verify exactly one block installed. Idempotency is bulletproof via the
 # delete-then-insert above, so the check is a sanity log only — no exit on
@@ -165,12 +157,12 @@ apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugi
 systemctl enable --now docker
 
 echo "=== MCP install: cloning Wazuh-MCP-Server ==="
-git clone --depth 1 https://github.com/gensecaihq/Wazuh-MCP-Server.git /opt/wazuh-mcp
+git clone --branch v4.2.1 --depth 1 https://github.com/gensecaihq/Wazuh-MCP-Server.git /opt/wazuh-mcp
 cd /opt/wazuh-mcp
 
 echo "=== MCP install: writing .env ==="
-WAZUH_API_PASS=$(grep -A1 "api_username: 'wazuh-wui'" /root/wazuh-install-files/wazuh-passwords.txt | tail -1 | grep -oE "'[^']+'" | tr -d "'")
-INDEXER_PASS=$(grep -A1 "indexer_username: 'admin'" /root/wazuh-install-files/wazuh-passwords.txt | tail -1 | grep -oE "'[^']+'" | tr -d "'")
+WAZUH_API_PASS=$(grep -A1 "api_username: 'wazuh-wui'" /root/wazuh-install-files/wazuh-passwords.txt | tail -1 | grep -oE "'[^']+'"|tr -d "'")
+INDEXER_PASS=$(grep -A1 "indexer_username: 'admin'" /root/wazuh-install-files/wazuh-passwords.txt | tail -1 | grep -oE "'[^']+'"|tr -d "'")
 AUTH_SECRET_KEY=$(openssl rand -hex 32)
 # MCP_API_KEY format the server validates: "wazuh_" + 43 base64url chars.
 # openssl rand -hex gives hex, which the server rejects (regenerates its
